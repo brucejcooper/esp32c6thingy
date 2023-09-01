@@ -1,0 +1,15 @@
+device_info = (
+    serial: bstr,
+    types: [1*5 uint],
+)
+
+light_aspect = {
+    0: bool, // is_on
+    ? 1: brightness, // brightness
+    ? 2: brightness, // min_brightness
+    ? 3: brightness, // max_brightness
+}
+
+brightness = 0..254
+
+aspect_data = light_aspect | pushbutton_aspect

@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "ESP-IDF",
+            "includePath": [
+                "${config:idf.espIdfPath}/components/freertos/**",
+                "${workspaceFolder}/managed_components/espressif__mdns/include",
+                "${workspaceFolder}/**",
+                "${config:idf.espIdfPath}/components/**",
+                "${config:idf.espIdfPath}/examples/common_components/protocol_examples_common/include"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}",
+                    "${config:idf.espIdfPath}/components"
+                ],
+                "limitSymbolsToIncludedHeaders": false
+            },
+            "defines": [],
+            "compilerPath": "/home/bruce/.espressif/tools/riscv32-esp-elf/esp-12.2.0_20230208/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}
