@@ -348,6 +348,23 @@ static void encodeLightAspectAttributes(light_aspect_t *light, CborEncoder *enco
     cbor_encoder_close_container(encoder, &attributeEncoder);
 }
 
+static void lightAspectSetIsOn(light_aspect_t *aspect, bool val) {
+    aspect->is_on = val;
+    // TODO send notifications
+}
+
+
+static void fetchCurrentLightLevel(light_aspect_t *light) {
+    int res = dali_send_command(DALI_GEAR_ADDR(1) | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(200));
+    if (res >= 0) {
+        ESP_LOGI(TAG, "Level is now %d", res);
+        light -> level = res;
+        // TODO notify listeners of new level
+    } else {
+        ESP_LOGW(TAG, "Error fetching level: %d", res);
+    }
+}
+
 static CborError setLightAspectAttribute(light_aspect_t *light, int attributeId, CborValue *val) {
     CborError err = CborNoError;
     int ival;
@@ -358,8 +375,17 @@ static CborError setLightAspectAttribute(light_aspect_t *light, int attributeId,
                 ESP_LOGW(TAG, "Light attribute IS_ON only accepts booleans");
                 return CborErrorIllegalType;
             }
-            err = cbor_value_get_boolean(val, &light->is_on);
-            ESP_LOGI(TAG, "light.is_on set to %d", light->is_on);
+            bool is_on;
+            err = cbor_value_get_boolean(val, &is_on);
+            ESP_LOGI(TAG, "light.is_on set to %d", is_on);
+            if (is_on) {
+                dali_send_command(DALI_GEAR_ADDR(1) | DALI_CMD_GOTO_LAST_ACTIVE_LEVEL, 0);
+                lightAspectSetIsOn(light, true);
+            } else {
+                dali_send_command(DALI_GEAR_ADDR(1) | DALI_CMD_OFF, 0);
+                lightAspectSetIsOn(light, false);
+            }
+            fetchCurrentLightLevel(light);
             return err;
 
         case LIGHT_ATTR_LEVEL:
@@ -502,10 +528,6 @@ static otCoapCode process_attribute_udpate(device_t *device, device_aspect_t *as
     return OT_COAP_CODE_CHANGED;
 }
 
-static void lightAspectSetIsOn(light_aspect_t *aspect, bool val) {
-    aspect->is_on = val;
-    // TODO send notifications
-}
 
 static otCoapCode process_light_service_call(device_t *device, light_aspect_t *aspect, light_serviceid_t serviceId, CborValue *params, int numParams) {
     CborError err;
@@ -563,14 +585,9 @@ static otCoapCode process_light_service_call(device_t *device, light_aspect_t *a
                 ESP_LOGW(TAG, "Attempt to apply delta of 0");             
                 return OT_COAP_CODE_NOT_ACCEPTABLE;
             }
-            int res = dali_send_command(DALI_GEAR_ADDR(1) | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(200));
-            if (res > 0) {
-                ESP_LOGI(TAG, "Level is now %d", res);
-                aspect -> level = res;
-                // TODO notify listeners of new level
-            } else {
-                ESP_LOGW(TAG, "Error fetching level after delta");
-            }
+            fetchCurrentLightLevel(aspect);
+
+            // TODO result should indicate which attributes have changed and to what.
             return OT_COAP_CODE_CHANGED;
 
 
