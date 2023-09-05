@@ -30,11 +30,12 @@ void add_device(device_t *dev);
 
 void device_init(device_t *dev, provider_base_t *provider,  device_serial_t *serial, int *aspect, size_t num_apsects);
 
-device_t *find_device(device_serial_t *serial);
-void delete_device(device_t *dev);
-void deviceIdToStr(device_serial_t *serial, char *out);
+device_t *device_find_by_serial(device_serial_t *serial);
+void device_delete(device_t *dev);
 bool device_has_aspect(device_t *dev, int aspect);
-
+device_t *device_get_all();
+bool device_serial_equals(device_serial_t *s1, device_serial_t *s2);
+char *device_serial_to_str(device_serial_t *serial, char *out);
 
 #ifdef __cplusplus
 }

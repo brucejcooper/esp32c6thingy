@@ -12,6 +12,8 @@
 #include "aspect_on_off.h"
 #include "aspect_brightness.h"
 #include <string.h>
+#include "cbor_helpers.h"
+#include "dali_device.h"
 
 #include "esp_log.h"
 #include "aspect_on_off.h"
@@ -376,151 +378,60 @@ static void dali_transcieve_worker(void *aContext) {
 }
 
 
-
-
-static int read_memory(dali_provider_t *self, uint32_t addr, unsigned int bank, unsigned int offset, uint8_t *out, size_t num) {
-	if (dali_send_command(self, DALI_CMD_SET_DTR1 | bank, pdMS_TO_TICKS(500)) != DALI_RESPONSE_NAK) {
-		return 1;
-	};
-	if (dali_send_command(self, DALI_CMD_SET_DTR0 | offset, pdMS_TO_TICKS(500)) != DALI_RESPONSE_NAK) {
-		return 1;
-	}
-
-	while (num--) {
-		int response = dali_send_command(self, addr | DALI_CMD_READ_MEMORY_LOCATION, pdMS_TO_TICKS(500));
-		if (response >= 0) {
-			*out++ = response;
-		} else {
-			ESP_LOGE(TAG, "Error reading memory bank");
-			return 2;
-		}
-	}
-	return 0;
-}
-
-
-static void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_serial_t *serial, uint16_t addr, uint8_t lightType, uint8_t level, uint8_t min_level, uint8_t max_level, uint8_t power_on_level, uint16_t group_membership) {
-    int aspects[2] = {
-        ASPECT_ON_OFF_ID,
-        ASPECT_BRIGHTNESS_ID
-    };    
-    device_init(&self->super, &prov->super, serial, aspects, min_level != max_level ? 2 : 1);
-
-    self->address = addr;
-    self->lightType = lightType;
-    self->level = level;
-    self->min_level = min_level;
-    self->max_level = max_level;
-    self->power_on_level = power_on_level;
-    self->group_membership = group_membership;
-}
-
-
-static ccpeed_err_t query_dali_device(dali_provider_t *self, uint8_t logicalAddr) {
-    char deviceIdStr[41];
-    device_serial_t serial;
-    uint16_t address;
-    uint8_t lightType;
-    uint8_t level;
-    uint8_t min_level;
-    uint8_t max_level;
-    uint8_t power_on_level;
-    uint16_t group_membership;
-
-    address = DALI_GEAR_ADDR(logicalAddr);
-
-	int res = dali_send_command(self, address | DALI_CMD_QUERY_DEVICE_TYPE, pdMS_TO_TICKS(500));
-	if (res < DALI_RESPONSE_NAK) {
-		ESP_LOGW(TAG, "Error scanning for device %d", logicalAddr);
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-
-	if (res == DALI_RESPONSE_NAK) {
-		ESP_LOGD(TAG, "Device %u not found", logicalAddr);
-		return CCPEED_ERROR_NOT_FOUND;
-	}
-    ESP_LOGI(TAG, "Device %d is of type %d", logicalAddr, res);
-
-	lightType = res;
-	if ((res = dali_send_command(self, address | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(500))) < 0) {
-        ESP_LOGW(TAG, "Didn't get response from querying Level of device %d", logicalAddr);
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-	level = res;
-
-	if ((res = dali_send_command(self, address | DALI_CMD_QUERY_MIN_LEVEL, pdMS_TO_TICKS(500))) < 0) {
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-	min_level = res;
-	
-	if ((res = dali_send_command(self, address | DALI_CMD_QUERY_MAX_LEVEL, pdMS_TO_TICKS(500))) < 0) {
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-	max_level = res;
-	if ((res = dali_send_command(self, address | DALI_CMD_QUERY_POWER_ON_LEVEL, pdMS_TO_TICKS(500))) < 0) {
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-	power_on_level = res;
-
-	if ((res = dali_send_command(self, address | DALI_CMD_QUERY_GROUPS_ZERO_TO_SEVEN, pdMS_TO_TICKS(500))) < 0) {
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-	group_membership = res;
-	if ((res = dali_send_command(self, address | DALI_CMD_QUERY_GROUPS_EIGHT_TO_FIFTEEN, pdMS_TO_TICKS(500))) < 0) {
-		return CCPEED_ERROR_BUS_ERROR;
-	}
-	group_membership |= res << 8;
-
-    // DALI unique identifier is a concatenation of its GTIN (6 bytes at offset 3) and its serial (8 bytes at offset 10)
-	if ((res = read_memory(self, address, 0, 3, serial.serial, 6))) {
-		ESP_LOGW(TAG, "Error reading memory bank 0: %d", res);
-		return CCPEED_ERROR_BUS_ERROR;
-	};
-	if ((res = read_memory(self, address, 0, 10, serial.serial+6, 8))) {
-		ESP_LOGW(TAG, "Error reading memory bank 0: %d", res);
-		return CCPEED_ERROR_BUS_ERROR;
-	};
-    serial.len = 14;
-
-
-    deviceIdToStr(&serial, deviceIdStr);
-
-    device_t *existing_device = find_device(&serial);
-
-    if (!existing_device) {
-        dali_device_t *dev = malloc(sizeof(dali_device_t));
-        if (dev == NULL) {
-            ESP_LOGE(TAG, "Could not allocate device memory");
-            return CCPEED_ERROR_NOMEM;
-        }
-        dali_device_init(dev, self, &serial, address, lightType, level, min_level, max_level, power_on_level, group_membership);
-        existing_device = (device_t *) dev;
-        add_device(existing_device);
-        ESP_LOGI(TAG, "Created device %s", deviceIdStr);
-    } else {
-        ESP_LOGI(TAG, "Device %s already registered", deviceIdStr);
-    }
-
-    ESP_LOGI(TAG, "Scanned device %s at addr %d type %d, level %d range(%d,%d) groups 0x%x", 
-                    deviceIdStr, 
-                    logicalAddr, 
-                    lightType, 
-                    level, 
-                    min_level, 
-                    max_level, 
-                    group_membership
-    );
-	return CCPEED_NO_ERR;
-}
-
-
 ccpeed_err_t scanDaliBus(dali_provider_t *provider) {
+    device_serial_t serial;
+    ccpeed_err_t err;
+    char buf[64];
 
     ESP_LOGI(TAG, "Scanning for DALI Devices");
     // TODO delete devices that are no longer found (blue paint)
     // TODO consider short cut for devices that are already allocated. 
     for (int i = 0; i < 64; i++) {
-        ccpeed_err_t err = query_dali_device(provider, i);
+        uint16_t shiftedAddr = DALI_GEAR_ADDR(i);
+        dali_device_t *device = dali_device_find_by_addr(shiftedAddr);
+        int type = dali_send_command(provider, shiftedAddr | DALI_CMD_QUERY_DEVICE_TYPE, pdMS_TO_TICKS(500));
+
+        if (type < DALI_RESPONSE_NAK) {
+            return CCPEED_ERROR_BUS_ERROR;
+        }
+
+        if (type == DALI_RESPONSE_NAK) {
+            // Device at this index does not exist.
+            ESP_LOGD(TAG, "Device at DALI gear address %d not found", i);
+
+            if (device) {
+                ESP_LOGI(TAG, "Deleting old device %s at DALI gear address %d", device_serial_to_str(&device->super.serial, buf), i);
+                device_delete((device_t *) device);
+                device = NULL;
+            }
+            continue;
+        }
+
+        // Check that the serial numbers still match. 
+        err = dali_device_read_serial(provider, shiftedAddr, &serial);
+        if (err != CCPEED_NO_ERR) {
+            return CCPEED_ERROR_BUS_ERROR;
+        }
+
+        if (device && !device_serial_equals(&serial, &device->super.serial)) {
+            // The device at the logical address has changed.
+            ESP_LOGW(TAG, "Device serial at DALI gear address %d has changed. Removing and re-adding.", i);
+            device_delete((device_t *) device);
+            device = NULL;
+            abort();
+        } 
+        
+        if (!device) {
+            ESP_LOGI(TAG, "Creating new device at DALI gear address %d for serial %s", i, device_serial_to_str(&serial, buf));
+            device = malloc(sizeof(dali_device_t));
+            if (!device) {
+                return CCPEED_ERROR_NOMEM;
+            }
+            dali_device_init(device, provider, &serial, shiftedAddr, type, 0, 0, 0, 0, 0);
+            add_device((device_t *) device);
+        }
+        ESP_LOGI(TAG, "Updaing parameters of device %s", device_serial_to_str(&device->super.serial, buf));
+        err = dali_device_update_all_attr(device);
         if (err != CCPEED_NO_ERR) {
             return err;
         }
@@ -533,17 +444,6 @@ static void scanDaliBusTask(void *params) {
     dali_provider_t *provider = params;
     scanDaliBus(provider);
     vTaskDelete(NULL);
-}
-
-
-CborError cbor_value_get_uint32(CborValue *val, uint32_t *out) {
-    uint64_t tmp;
-
-    CborError err = cbor_value_get_uint64(val, &tmp);
-    if (err == CborNoError) {
-        *out = (uint32_t) tmp;
-    }
-    return err;
 }
 
 
@@ -647,204 +547,5 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
     xTaskCreate(scanDaliBusTask, "dali_bus_scanner", 4096, self, 4, NULL);
 
     ESP_LOGI(TAG, "Configured DALI provider TX: %lu, RX: %lu", self->tx_pin, self->rx_pin);
-    return CCPEED_NO_ERR;
-}
-
-
-
-ccpeed_err_t dali_device_encode_attributes(dali_device_t *dev, int aspect_id, CborEncoder *encoder) {
-    CborEncoder attributeEncoder;
-    switch (aspect_id) {
-        case ASPECT_ON_OFF_ID:
-            cbor_encoder_create_map(encoder, &attributeEncoder, 1);
-            cbor_encode_uint(&attributeEncoder, ASPECT_ON_OFF_ATTR_IS_ON_ID);
-            cbor_encode_boolean(&attributeEncoder, dev->level != 0);
-            cbor_encoder_close_container(encoder, &attributeEncoder);
-
-            break;
-        case ASPECT_BRIGHTNESS_ID:
-            cbor_encoder_create_map(encoder, &attributeEncoder, 3);
-            cbor_encode_uint(&attributeEncoder, ASPECT_BRIGHTNESS_ATTR_LEVEL_ID);
-            cbor_encode_uint(&attributeEncoder, dev->level);
-
-            cbor_encode_uint(&attributeEncoder, ASPECT_BRIGHTNESS_ATTR_MIN_LEVEL_ID);
-            cbor_encode_uint(&attributeEncoder, dev->min_level);
-
-            cbor_encode_uint(&attributeEncoder, ASPECT_BRIGHTNESS_ATTR_MAX_LEVEL_ID);
-            cbor_encode_uint(&attributeEncoder, dev->max_level);
-
-            cbor_encoder_close_container(encoder, &attributeEncoder);
-            break;
-    }
-    return CCPEED_NO_ERR;
-
-}
-
-
-static void fetchCurrentLightLevel(dali_device_t *self) {
-    int res = dali_send_command((dali_provider_t *)self->super.provider, self-> address | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(200));
-    if (res >= 0) {
-        ESP_LOGI(TAG, "Level is now %d", res);
-        self->level = res;
-        // TODO notify listeners of new level
-    } else {
-        ESP_LOGW(TAG, "Error fetching level: %d", res);
-    }
-}
-
-
-int dali_device_send_command(dali_device_t *device, uint16_t cmd, TickType_t timeToWait) {
-    return dali_send_command((dali_provider_t *) device->super.provider, device->address | cmd, timeToWait);
-}
-
-
-ccpeed_err_t dali_set_attr(dali_device_t *dev, int aspect_id, int attr_id, CborValue *val) {
-    int ival;
-    CborError err;
-
-    switch (aspect_id) {
-        case ASPECT_ON_OFF_ID:
-            switch (attr_id) {
-                case ASPECT_ON_OFF_ATTR_IS_ON_ID:
-                    if (!cbor_value_is_boolean(val)) {
-                        ESP_LOGW(TAG, "Light attribute IS_ON only accepts booleans");
-                        return CborErrorIllegalType;
-                    }
-                    bool is_on;
-                    err = cbor_value_get_boolean(val, &is_on);
-                    if (err != CborNoError) {
-                        return CCPEED_ERROR_INVALID;
-                    }
-
-                    ESP_LOGI(TAG, "dali light.is_on set to %d", is_on);
-
-                    if (is_on) {
-                        dali_device_send_command(dev, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL, 0);
-                    } else {
-                        dali_device_send_command(dev, DALI_CMD_OFF, 0);
-                    }
-                    fetchCurrentLightLevel(dev);
-                    break;
-                default:
-                    return CCPEED_ERROR_NOT_FOUND;
-            }
-            break;
-        case ASPECT_BRIGHTNESS_ID:
-            switch (attr_id) {
-                case ASPECT_BRIGHTNESS_ATTR_LEVEL_ID:
-                    if (!cbor_value_is_unsigned_integer(val)) {
-                        ESP_LOGW(TAG, "Light attribute level only accepts unsigned integers");
-                        return CborErrorIllegalType;
-                    }
-                    err = cbor_value_get_int_checked(val, &ival);
-                    dev->level = ival;
-                    ESP_LOGI(TAG, "light.level set to %d", dev->level);
-                    break;
-                case ASPECT_BRIGHTNESS_ATTR_MIN_LEVEL_ID:
-                    if (!cbor_value_is_unsigned_integer(val)) {
-                        ESP_LOGW(TAG, "Light attribute min_level only accepts unsigned integers");
-                        return CborErrorIllegalType;
-                    }
-
-                    err = cbor_value_get_int_checked(val, &ival);
-                    dev->min_level = ival;
-                    ESP_LOGI(TAG, "light.min_level set to %d", dev->min_level);
-                    break;
-                case ASPECT_BRIGHTNESS_ATTR_MAX_LEVEL_ID:
-                    if (!cbor_value_is_unsigned_integer(val)) {
-                        ESP_LOGW(TAG, "Light attribute max_level only accepts unsigned integers");
-                        return CborErrorIllegalType;
-                    }
-                    err = cbor_value_get_int_checked(val, &ival);
-                    dev->max_level = ival;
-                    ESP_LOGI(TAG, "light.max_level set to %d", dev->max_level);
-                    break;
-                case ASPECT_BRIGHTNESS_ATTR_POWER_ON_LEVEL_ID:
-                    break;
-                default:
-                    return CCPEED_ERROR_NOT_FOUND;
-            }
-            break;
-        default:
-            return CCPEED_ERROR_NOT_FOUND;
-    }
-    return CCPEED_NO_ERR;
-}
-
-
-
-ccpeed_err_t dali_process_service_call(dali_device_t *device, int aspectId, int serviceId, CborValue *params, size_t numParams) {
-    CborError err;
-
-    switch (aspectId) {
-        case ASPECT_ON_OFF_ID:
-            switch (serviceId) {
-                case ASPECT_ON_OFF_SERVICE_TOGGLE_ID:
-                    if (numParams != 0) {
-                        ESP_LOGW(TAG, "Toggle has no parameters");
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    ESP_LOGI(TAG, "Toggling is_on");
-                    if (device->level) {
-                        dali_device_send_command(device, DALI_CMD_OFF, 0);
-                        device->level = 0;
-                    } else {
-                        dali_device_send_command(device, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL, 0);
-                    }
-                    fetchCurrentLightLevel(device);
-
-                    return CCPEED_NO_ERR;
-
-                default:
-                    return CCPEED_ERROR_NOT_FOUND;
-            }
-            break;
-        case ASPECT_BRIGHTNESS_ID:
-            switch (serviceId) {
-                case ASPECT_BRIGHTNESS_SERVICE_DELTA_ID:
-                    if (numParams != 1) {
-                        ESP_LOGW(TAG, "apply_brightness_delta takes exactly one argument");
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    if (!cbor_value_is_integer(params)) {
-                        ESP_LOGW(TAG, "Param must be an integer");
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    int delta;
-                    err = cbor_value_get_int_checked(params, &delta);
-                    if (err != CborNoError) {                        
-                        ESP_LOGW(TAG, "Error parsing delta");
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    err = cbor_value_advance(params);
-                    if (err != CborNoError) {           
-                        ESP_LOGW(TAG, "Error getting attr %d", err);             
-                        return CCPEED_ERROR_INVALID;
-                    }
-
-                    ESP_LOGI(TAG, "Applying delta of %d", delta);
-
-                    // Parameters parsed successfully.  Proceed to make the change. 
-                    if (!device->level) {
-                        dali_device_send_command(device, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL, 0);
-                    }
-                    if (delta > 0) {
-                        dali_device_send_command(device, DALI_CMD_UP, 0);
-                    } else if (delta < 0) {
-                        dali_device_send_command(device, DALI_CMD_DOWN, 0);
-                    } else {
-                        // Delta is zero, which is silly
-                        ESP_LOGW(TAG, "Attempt to apply delta of 0");             
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    fetchCurrentLightLevel(device);
-                    break;
-                default:
-                    return CCPEED_ERROR_NOT_FOUND;
-            }
-            break;
-        default:
-            return CCPEED_ERROR_NOT_FOUND;
-    }
     return CCPEED_NO_ERR;
 }

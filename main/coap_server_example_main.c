@@ -29,6 +29,7 @@
 
 #include "root_provider.h"
 #include "dali_provider.h"
+#include "dali_device.h"
 #include "provider.h"
 #include "aspect_on_off.h"
 #include "aspect_brightness.h"
@@ -309,7 +310,7 @@ static otCoapCode process_attribute_udpate(device_t *device, int aspectId, uint8
 
 
         if (device->provider->type == DALI_PROVIDER_ID) {
-            cerr = dali_set_attr((dali_device_t *) device, aspectId, label, &mapIter);
+            cerr = dali_device_set_attr((dali_device_t *) device, aspectId, label, &mapIter);
         } else {            
             ESP_LOGE(TAG, "Attempt to update parameter on an unknown device type");
             return OT_COAP_CODE_NOT_IMPLEMENTED;
@@ -394,7 +395,7 @@ static otCoapCode process_service_call(device_t *device, int aspectId, uint8_t *
     }
 
     if (device->provider->type == DALI_PROVIDER_ID) {
-        cerr = dali_process_service_call((dali_device_t *) device, aspectId, serviceId, &listIter, item_count-1);
+        cerr = dali_device_process_service_call((dali_device_t *) device, aspectId, serviceId, &listIter, item_count-1);
 
         switch (cerr) {
             case CCPEED_NO_ERR:
@@ -472,7 +473,7 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
             // TODO length check.
             memcpy(serial.serial, pathElem[1], pathLen[1]);
 
-            device_t *dev = find_device(&serial);
+            device_t *dev = device_find_by_serial(&serial);
             if (dev == NULL) {
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
@@ -633,7 +634,7 @@ static void ot_task_worker(void *aContext)
 static const uint8_t root_config[] = { 
     0x81,  // We have one provider
       0x83, // Each provider is an array.
-        0x02, // Provider type 2,
+        0x02, // Provider type 2 (DALI BUS),
         0x04, // TX pin 4
         0x05, // RX pin 5
 };
