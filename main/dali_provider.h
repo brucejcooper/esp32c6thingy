@@ -4,9 +4,19 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
+#include "provider.h"
+#include <cbor.h>
 #include "freertos/FreeRTOS.h"
+#include "dali_rmt_encoder.h"
+#include "esp_timer.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "ccpeed_err.h"
+#include "device.h"
+
+#define DALI_PROVIDER_ID 2
 
 // Device Addressed Commands (all have bit 8 set)
 #define DALI_CMD_OFF 0x100
@@ -111,26 +121,48 @@ extern "C" {
 #define DALI_RESPONSE_QUEUED -4
 #define DALI_RESPONSE_PROCESSING -5
 
-typedef struct __attribute__((__packed__))  {
-	// We don't load the first two bytes of the memory bank, as the device doesn't respond for the second reserved one. 
-	// uint8_t last_offset;
-	// uint8_t _res;
-	uint8_t last_mem_bank;
-	uint8_t gtin[6];
-	uint16_t fimware_version;
-	uint8_t id[8];
-	uint16_t hw_version;
-	uint8_t dali_version;
-	uint8_t num_gear;
-	uint8_t num_devices;
-	uint8_t num_logical_gear;
-	uint8_t num_logical_devices;
-	uint8_t this_device_index;
-} dali_device_bank_0_t;
+
+typedef struct {
+    provider_base_t super;
+
+    uint32_t tx_pin;
+    uint32_t rx_pin;
+
+    rmt_channel_handle_t tx_chan;
+    rmt_channel_handle_t rx_chan;
+
+    volatile QueueHandle_t command_complete_queue;
+    volatile QueueHandle_t pending_cmd_queue;
+
+    rmt_symbol_word_t receiveBuf[64];
+    esp_timer_handle_t rxTimeoutTimer;
+
+    TaskHandle_t transcieve_task;
+} dali_provider_t;
 
 
-void dali_init();
-int dali_send_command(uint16_t value, TickType_t ticksToWait) ;
+typedef struct {
+    device_t super;
+    uint16_t address; // THis is already shifted.
+
+    uint8_t lightType;
+    uint16_t group_membership;
+    uint8_t level;
+    uint8_t min_level;
+    uint8_t max_level;
+    uint8_t power_on_level;
+} dali_device_t;
+
+
+
+
+
+ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it);
+ccpeed_err_t dali_send_command(dali_provider_t *prov, uint16_t value, TickType_t ticksToWait) ;
+ccpeed_err_t dali_device_encode_attributes(dali_device_t *_dev, int aspect_id, CborEncoder *encoder);
+ccpeed_err_t dali_set_attr(dali_device_t *_dev, int aspect_id, int attr_id, CborValue *val);
+ccpeed_err_t dali_process_service_call(dali_device_t *device, int aspectId, int serviceId, CborValue *attr, size_t attr_count);
+
 
 #ifdef __cplusplus
 }
