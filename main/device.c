@@ -90,3 +90,12 @@ bool device_has_aspect(device_t *dev, int aspect) {
     }
     return false;
 }
+
+
+int device_count() {
+    size_t count = 0;
+    for (device_t *dev = device_get_all(); dev != NULL; dev = (device_t *) dev->_llitem.next) {
+        count++;
+    }
+    return count;
+}

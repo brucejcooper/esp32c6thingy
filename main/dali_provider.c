@@ -451,11 +451,7 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
     provider_init(&self->super, DALI_PROVIDER_ID);
     CborError err;
 
-    if (!cbor_value_is_unsigned_integer(it)) {
-        ESP_LOGE(TAG, "First parameter to DALI provider must be an Integer for TX pin");
-        return CCPEED_ERROR_INVALID;
-    }
-    err = cbor_value_get_uint32(it, &self->tx_pin);
+    err = cbor_expect_uint32(it, 32, &self->tx_pin);
     if (err) {
         return CCPEED_ERROR_INVALID;
     }
@@ -464,11 +460,7 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
         return CCPEED_ERROR_INVALID;
     }
     
-    if (!cbor_value_is_unsigned_integer(it)) {
-        ESP_LOGE(TAG, "Second parameter to DALI provider must be an Integer for RX pin");
-        return CCPEED_ERROR_INVALID;
-    }
-    err = cbor_value_get_uint32(it, &self->rx_pin);
+    err = cbor_expect_uint32(it, 32, &self->rx_pin);
     if (err) {
         return CCPEED_ERROR_INVALID;
     }
@@ -479,7 +471,7 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
 
 
     // Set up IO
-        // The RMT driver will turn GPIO on first, then drive it to its idle value.  To avoid an unwanted pulse, we setup the GPIO first.
+    // The RMT driver will turn GPIO on first, then drive it to its idle value.  To avoid an unwanted pulse, we setup the GPIO first.
     gpio_config_t gpioConfig = {
         .mode = GPIO_MODE_OUTPUT,
         .pull_down_en = GPIO_PULLDOWN_ENABLE,
@@ -516,8 +508,6 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &self->rxTimeoutTimer));
 
-
-
     rmt_rx_channel_config_t rxconfig = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .gpio_num = self->rx_pin,
@@ -537,9 +527,6 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
 
 
     // Set up queues and tasks.
-
-
-
     xTaskCreate(dali_transcieve_worker, "dali_transcieve_worker", 8192, self, 5, &self->transcieve_task);
 
     // Schedule an initial scan 

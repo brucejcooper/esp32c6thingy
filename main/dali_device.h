@@ -107,6 +107,15 @@ extern "C" {
 
 
 
+#define DALI_DEVICE_STATUS_BALLAST 0x01
+#define DALI_DEVICE_STATUS_LAMP_FAILURE 0x02
+#define DALI_DEVICE_STATUS_ARC_POWER_ON 0x04
+#define DALI_DEVICE_STATUS_LIMIT_ERROR 0x08
+#define DALI_DEVICE_STATUS_FADE_RUNNING 0x10
+#define DALI_DEVICE_STATUS_RESET_STATE 0x20
+#define DALI_DEVICE_STATUS_MISSING_SHORT_ADDR 0x40
+#define DALI_DEVICE_STATUS_POWER_FAILURE 0x80
+
 
 
 #define DALI_GEAR_ADDR(x) ((x) << 9)
@@ -133,9 +142,6 @@ void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_serial_
 ccpeed_err_t dali_device_encode_attributes(dali_device_t *_dev, int aspect_id, CborEncoder *encoder);
 ccpeed_err_t dali_device_set_attr(dali_device_t *_dev, int aspect_id, int attr_id, CborValue *val);
 ccpeed_err_t dali_device_process_service_call(dali_device_t *device, int aspectId, int serviceId, CborValue *attr, size_t attr_count);
-int dali_device_send_command(dali_device_t *device, uint16_t cmd, TickType_t timeToWait);
-void dali_device_fetch_level(dali_device_t *self);
-ccpeed_err_t query_dali_device(dali_provider_t *self, uint8_t logicalAddr);
 dali_device_t *dali_device_find_by_addr(uint16_t addr);
 ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, device_serial_t *serial);
 ccpeed_err_t dali_device_update_all_attr(dali_device_t *device);

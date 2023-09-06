@@ -38,6 +38,7 @@
 #include <driver/uart.h>
 
 #include <cbor.h>
+#include "cbor_helpers.h"
 #include "openthread/cli.h"
 #include "openthread/instance.h"
 #include "esp_openthread.h"
@@ -122,11 +123,11 @@ static char defaultMacStr[17];
 
 const static char *TAG = "CoAP_server";
 
-static void testResourceHandler(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo);
+static void list_devices_handler(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo);
 
 static otCoapResource testResource = {
     .mContext = NULL,
-    .mHandler = testResourceHandler,
+    .mHandler = list_devices_handler,
     .mNext = NULL,
     .mUriPath = "d"
 };
@@ -227,10 +228,12 @@ static void ipAddressChangeCallback(const otIp6AddressInfo *aAddressInfo, bool a
     }
 }
 
-static void testResourceHandler(void *aContext, otMessage *request_message, const otMessageInfo *aMessageInfo) {
-    ESP_LOGI(TAG, "Test resource called");
+static void list_devices_handler(void *aContext, otMessage *request_message, const otMessageInfo *aMessageInfo) {
+    ESP_LOGD(TAG, "List devices called");
     otMessage *response = NULL;
     otError error = OT_ERROR_NONE;
+    CborEncoder encoder, deviceMapEncoder, deviceEncoder, aspectEncoder;
+    uint8_t buf[2000];
 
     otInstance *instance = esp_openthread_get_instance();
 
@@ -248,17 +251,31 @@ static void testResourceHandler(void *aContext, otMessage *request_message, cons
 		goto end;
 	}
 
+    cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
+    // TODO race condition. Lock it for the duration.
+    cbor_encoder_create_map(&encoder, &deviceMapEncoder, device_count());
+    for (device_t *dev = device_get_all(); dev != NULL; dev = (device_t *) dev->_llitem.next) {
+        // Key
+        cbor_encode_byte_string(&deviceMapEncoder, dev->serial.serial, dev->serial.len);
+        // Value
+        cbor_encoder_create_array(&deviceMapEncoder, &deviceEncoder, 1);
+            // Only field - the array of aspects
+            cbor_encoder_create_array(&deviceEncoder, &aspectEncoder, dev->num_aspects);
+            for (int i = 0; i < dev->num_aspects; i++) {
+                cbor_encode_uint(&aspectEncoder, dev->aspects[i]);
+            }
+            cbor_encoder_close_container(&deviceEncoder, &aspectEncoder);
+        cbor_encoder_close_container(&deviceMapEncoder, &deviceEncoder);
+    }
+    cbor_encoder_close_container(&encoder, &deviceMapEncoder);
 
-	uint8_t *payload = (uint8_t *) "Testing";
-	size_t payload_size = 7;
-
-	error = otMessageAppend(response, payload, payload_size);
+	error = otMessageAppend(response, buf, encoder.data.ptr-buf);
 	if (error != OT_ERROR_NONE) {
 		goto end;
 	}
 
 	error = otCoapSendResponse(instance, response, aMessageInfo);
-	ESP_LOG_BUFFER_HEXDUMP(TAG, payload, payload_size, ESP_LOG_INFO);
+	// ESP_LOG_BUFFER_HEXDUMP(TAG, buf, encoder.data.ptr-buf, ESP_LOG_INFO);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL) {
@@ -295,11 +312,8 @@ static otCoapCode process_attribute_udpate(device_t *device, int aspectId, uint8
     }
     ESP_LOGD(TAG, "There are %d attribtues to set", num_attrs);
     for (int i = 0; i < num_attrs; i++) {
-        if (!cbor_value_is_unsigned_integer(&mapIter)) {
-            return OT_COAP_CODE_NOT_ACCEPTABLE;
-        }
-        int label;
-        err = cbor_value_get_int_checked(&mapIter, &label);
+        uint32_t label;
+        err = cbor_expect_uint32(&mapIter, UINT32_MAX, &label);
         if (err != CborNoError) {                        
             return OT_COAP_CODE_NOT_ACCEPTABLE;
         }
@@ -350,7 +364,7 @@ static otCoapCode process_service_call(device_t *device, int aspectId, uint8_t *
     ccpeed_err_t cerr;
     len = 0;
 
-    ESP_LOGI(TAG, "Processing service call");
+    ESP_LOGD(TAG, "Processing service call");
 
     if (err != CborNoError) {                        
         ESP_LOGW(TAG, "Error creating parser %d", err);
@@ -376,12 +390,8 @@ static otCoapCode process_service_call(device_t *device, int aspectId, uint8_t *
         ESP_LOGW(TAG, "Could not enter array");         
         return OT_COAP_CODE_NOT_ACCEPTABLE;
     }
-    if (!cbor_value_is_unsigned_integer(&listIter)) {
-        ESP_LOGW(TAG, "Service parameter is not an integer");
-        return OT_COAP_CODE_NOT_ACCEPTABLE;
-    }
-    int serviceId;
-    err = cbor_value_get_int_checked(&listIter, &serviceId);
+    uint32_t serviceId;
+    err = cbor_expect_uint32(&listIter, UINT32_MAX, &serviceId);
     if (err != CborNoError) {                        
         ESP_LOGW(TAG, "Could not fetch serviceId");
         return OT_COAP_CODE_NOT_ACCEPTABLE;
@@ -436,7 +446,7 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
     device_serial_t serial;
     int numPath = 0;
 
-    ESP_LOGI(TAG, "Handling request");
+    ESP_LOGD(TAG, "Handling request");
 
     otCoapOptionIteratorInit(&iter, request_message);
     requestCode = otCoapMessageGetCode(request_message);
@@ -461,10 +471,12 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
         opt = otCoapOptionIteratorGetNextOption(&iter);
     }
 
+    ESP_LOGD(TAG, "Number of path elements is %d", numPath);
     switch (numPath) {
         case 3:
             // Respond to d/{deviceId}/${aspect}
             if (strcmp((char *) pathElem[0], "d") != 0) {
+                ESP_LOGI(TAG, "First path element is not d");
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
@@ -475,16 +487,19 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
 
             device_t *dev = device_find_by_serial(&serial);
             if (dev == NULL) {
+                ESP_LOGI(TAG, "Couldn't find device");
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
             if (pathLen[2] != 1) {
+                ESP_LOGI(TAG, "Extension too long");
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
             int aspectId = pathElem[2][0];
 
             if (!device_has_aspect(dev, aspectId)) {
+                ESP_LOGI(TAG, "Device does not have aspect %d", aspectId);
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
@@ -493,7 +508,7 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
 
             switch (requestCode) {
                 case OT_COAP_CODE_GET:
-                    ESP_LOGI(TAG, "Request is GET");
+                    ESP_LOGD(TAG, "Request is GET");
                     // Encode all attributes as a CBOR map.
                     cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
                     if (dev->provider->type == DALI_PROVIDER_ID) {
@@ -507,13 +522,13 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
                     break;
                 case OT_COAP_CODE_PUT:
                     len = otMessageRead(request_message, otMessageGetOffset(request_message), buf, sizeof(buf));
-                    ESP_LOGI(TAG, "Request is PUT");
+                    ESP_LOGD(TAG, "Request is PUT");
                     responseCode = process_attribute_udpate(dev, aspectId, buf, len);
                     len = 0;
                     break;
                 case OT_COAP_CODE_POST:
                     len = otMessageRead(request_message, otMessageGetOffset(request_message), buf, sizeof(buf));
-                    ESP_LOGI(TAG, "Request is POST");
+                    ESP_LOGD(TAG, "Request is POST");
                     responseCode = process_service_call(dev, aspectId, buf, len);
                     len = 0;
                     break;

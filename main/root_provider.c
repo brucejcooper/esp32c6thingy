@@ -4,6 +4,7 @@
 #include "provider.h"
 #include "root_provider.h"
 #include "dali_provider.h"
+#include "cbor_helpers.h"
 #include <esp_log.h>
 #include <cbor.h>
 
@@ -50,12 +51,8 @@ ccpeed_err_t root_provider_init(root_provider_t *self, uint8_t *configBytes, siz
             return CCPEED_ERROR_INVALID;
         }
 
-        if (!cbor_value_is_integer(&providerConfig)) {
-            return CCPEED_ERROR_INVALID;
-        }
-
-        int providerId;
-        err = cbor_value_get_int(&providerConfig, &providerId);
+        uint32_t providerId;
+        err = cbor_expect_uint32(&providerConfig, UINT32_MAX, &providerId);
         if (err != CborNoError) {
             return CCPEED_ERROR_INVALID;
         }
@@ -80,7 +77,7 @@ ccpeed_err_t root_provider_init(root_provider_t *self, uint8_t *configBytes, siz
                 add_provider((provider_base_t *) newDaliProv);
                 break;
             default:
-                ESP_LOGW(TAG, "Invalid providerId %d", providerId);
+                ESP_LOGW(TAG, "Invalid providerId %lu", providerId);
                 break;
         }
 

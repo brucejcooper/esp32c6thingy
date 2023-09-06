@@ -36,6 +36,7 @@ bool device_has_aspect(device_t *dev, int aspect);
 device_t *device_get_all();
 bool device_serial_equals(device_serial_t *s1, device_serial_t *s2);
 char *device_serial_to_str(device_serial_t *serial, char *out);
+int device_count();
 
 #ifdef __cplusplus
 }

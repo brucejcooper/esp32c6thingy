@@ -3,4 +3,5 @@
 #include <stdint.h>
 #include <cbor.h>
 
-CborError cbor_value_get_uint32(CborValue *val, uint32_t *out);
+CborError cbor_expect_uint32(CborValue *val, const uint32_t max_value, uint32_t *out);
+CborError cbor_expect_bool(CborValue *val, bool *out);
