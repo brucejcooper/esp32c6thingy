@@ -378,7 +378,7 @@ static void dali_transcieve_worker(void *aContext) {
 }
 
 
-ccpeed_err_t scanDaliBus(dali_provider_t *provider) {
+static ccpeed_err_t dali_provider_scan(dali_provider_t *provider) {
     device_serial_t serial;
     ccpeed_err_t err;
     char buf[64];
@@ -389,13 +389,13 @@ ccpeed_err_t scanDaliBus(dali_provider_t *provider) {
     for (int i = 0; i < 64; i++) {
         uint16_t shiftedAddr = DALI_GEAR_ADDR(i);
         dali_device_t *device = dali_device_find_by_addr(shiftedAddr);
-        int type = dali_send_command(provider, shiftedAddr | DALI_CMD_QUERY_DEVICE_TYPE, pdMS_TO_TICKS(500));
-
-        if (type < DALI_RESPONSE_NAK) {
+        int presentResponse = dali_send_command(provider, shiftedAddr | DALI_CMD_QUERY_CONTROL_GEAR_PRESENT, pdMS_TO_TICKS(500));
+        if (presentResponse < DALI_RESPONSE_NAK) {
             return CCPEED_ERROR_BUS_ERROR;
         }
 
-        if (type == DALI_RESPONSE_NAK) {
+        // If a device was present, it will respond with 0xFF
+        if (presentResponse != 0xFF) {
             // Device at this index does not exist.
             ESP_LOGD(TAG, "Device at DALI gear address %d not found", i);
 
@@ -427,7 +427,7 @@ ccpeed_err_t scanDaliBus(dali_provider_t *provider) {
             if (!device) {
                 return CCPEED_ERROR_NOMEM;
             }
-            dali_device_init(device, provider, &serial, shiftedAddr, type, 0, 0, 0, 0, 0);
+            dali_device_init(device, provider, &serial, shiftedAddr, presentResponse, 0, 0, 0, 0, 0);
             add_device((device_t *) device);
         }
         ESP_LOGI(TAG, "Updaing parameters of device %s", device_serial_to_str(&device->super.serial, buf));
@@ -442,7 +442,7 @@ ccpeed_err_t scanDaliBus(dali_provider_t *provider) {
 
 static void scanDaliBusTask(void *params) {
     dali_provider_t *provider = params;
-    scanDaliBus(provider);
+    dali_provider_scan(provider);
     vTaskDelete(NULL);
 }
 

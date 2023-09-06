@@ -205,6 +205,7 @@ static ccpeed_err_t dali_device_query(dali_device_t *self, uint16_t query_cmd, u
 
 
 static ccpeed_err_t dali_device_fetch_level(dali_device_t *self) {
+    char buf[41];
     int res = dali_send_command((dali_provider_t *)self->super.provider, self-> address | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(200));
     if (res >= 0) {
         ESP_LOGI(TAG, "Device %s level is now %d", device_serial_to_str(&self->super.serial, buf), res);
@@ -219,9 +220,10 @@ static ccpeed_err_t dali_device_fetch_level(dali_device_t *self) {
 
 
 static ccpeed_err_t dali_device_wait_for_fade(dali_device_t *self) {
-    char buf[41];
     ccpeed_err_t err;
     uint8_t status = 0xFF;
+
+    // TODO If device doesn't support fading, we can short-cut.
 
 
     // Wait for fade to complete. 
@@ -231,14 +233,13 @@ static ccpeed_err_t dali_device_wait_for_fade(dali_device_t *self) {
         if (err != CCPEED_NO_ERR) {
             return err;
         }
-        fade_running = err & DALI_DEVICE_STATUS_FADE_RUNNING;
+        fade_running = status & DALI_DEVICE_STATUS_FADE_RUNNING;
         if (fade_running) {
             vTaskDelay(1);
         }
     } while (fade_running);
+    return CCPEED_NO_ERR;
 
-    // Fetch current level.
-    return dali_device_fetch_level(self);
 }
 
 
@@ -398,7 +399,7 @@ ccpeed_err_t dali_device_process_service_call(dali_device_t *device, int aspectI
                         }
 
                     }
-                    cerr = dali_device_wait_for_fade(device) || dali_device_fetch_level(self);
+                    cerr = dali_device_wait_for_fade(device) || dali_device_fetch_level(device);
                     if (cerr != CCPEED_NO_ERR) {
                         return cerr;
                     }
@@ -454,7 +455,7 @@ ccpeed_err_t dali_device_process_service_call(dali_device_t *device, int aspectI
                         ESP_LOGW(TAG, "Attempt to apply delta of 0");             
                         return CCPEED_ERROR_INVALID;
                     }
-                    cerr = dali_device_wait_for_fade(device) || dali_device_fetch_level(self);
+                    cerr = dali_device_wait_for_fade(device) || dali_device_fetch_level(device);
                     if (cerr != CCPEED_NO_ERR) {
                         return cerr;
                     }
