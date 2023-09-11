@@ -161,7 +161,8 @@ ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, d
 }
 
 
-ccpeed_err_t dali_device_encode_attributes(dali_device_t *dev, int aspect_id, CborEncoder *encoder) {
+ccpeed_err_t dali_device_encode_attributes(device_t *self, int aspect_id, CborEncoder *encoder) {
+    dali_device_t *dev = (dali_device_t *) self;
     CborEncoder attributeEncoder;
     char buf[41];
 
@@ -328,7 +329,8 @@ static ccpeed_err_t dali_device_set_is_on(dali_device_t *self, bool val) {
     return dali_device_wait_for_fade(self) || dali_device_fetch_level(self);
 }
 
-ccpeed_err_t dali_device_set_attr(dali_device_t *dev, int aspect_id, int attr_id, CborValue *val) {
+ccpeed_err_t dali_device_set_attr(device_t *self, int aspect_id, int attr_id, CborValue *val) {
+    dali_device_t *dev = (dali_device_t *) self;
     CborError err;
     
     switch (aspect_id) {
@@ -371,7 +373,8 @@ ccpeed_err_t dali_device_set_attr(dali_device_t *dev, int aspect_id, int attr_id
 
 
 
-ccpeed_err_t dali_device_process_service_call(dali_device_t *device, int aspectId, int serviceId, CborValue *params, size_t numParams) {
+ccpeed_err_t dali_device_process_service_call(device_t *self, int aspectId, int serviceId, CborValue *params, size_t numParams) {
+    dali_device_t *device = (dali_device_t *) self;
     CborError err;
     char buf[41];
     ccpeed_err_t cerr;

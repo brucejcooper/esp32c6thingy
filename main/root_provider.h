@@ -17,12 +17,10 @@ extern "C" {
 
 typedef struct {
     provider_base_t super;
-    uint8_t *config;
-    size_t configLen;
 } root_provider_t;
 
 
-ccpeed_err_t root_provider_init(root_provider_t *self, uint8_t *configBytes, size_t configLen);
+ccpeed_err_t root_provider_init(root_provider_t *self);
 
 #ifdef __cplusplus
 }

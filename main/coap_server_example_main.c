@@ -60,12 +60,6 @@
 #include "device.h"
 
 
-#ifndef CONFIG_COAP_SERVER_SUPPORT
-#error COAP_SERVER_SUPPORT needs to be enabled
-#endif /* COAP_SERVER_SUPPORT */
-
-
-
 typedef enum { 
     DEVICE_ASPECT_TYPE_LIGHT = 1, 
     DEVICE_ASPECT_TYPE_PUSH_BUTTON = 2, 
@@ -89,15 +83,8 @@ typedef enum {
 } push_button_eventid_t;
 
 
-
-
-
-
 static uint8_t defaultMac[8];
 static char defaultMacStr[17];
-
-
-
 
 
 /* The examples use simple Pre-Shared-Key configuration that you can set via
@@ -121,7 +108,7 @@ static char defaultMacStr[17];
 */
 #define EXAMPLE_COAP_LOG_DEFAULT_LEVEL CONFIG_COAP_LOG_DEFAULT_LEVEL
 
-const static char *TAG = "CoAP_server";
+const static char *TAG = "CCPEED Device";
 
 static void list_devices_handler(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo);
 
@@ -323,8 +310,8 @@ static otCoapCode process_attribute_udpate(device_t *device, int aspectId, uint8
         }
 
 
-        if (device->provider->type == DALI_PROVIDER_ID) {
-            cerr = dali_device_set_attr((dali_device_t *) device, aspectId, label, &mapIter);
+        if (device->provider->set_attr_fn) {
+            cerr = device->provider->set_attr_fn(device, aspectId, label, &mapIter);
         } else {            
             ESP_LOGE(TAG, "Attempt to update parameter on an unknown device type");
             return OT_COAP_CODE_NOT_IMPLEMENTED;
@@ -404,9 +391,8 @@ static otCoapCode process_service_call(device_t *device, int aspectId, uint8_t *
         return OT_COAP_CODE_NOT_ACCEPTABLE;
     }
 
-    if (device->provider->type == DALI_PROVIDER_ID) {
-        cerr = dali_device_process_service_call((dali_device_t *) device, aspectId, serviceId, &listIter, item_count-1);
-
+    if (device->provider->process_service_call_fn) {
+        cerr = device->provider->process_service_call_fn(device, aspectId, serviceId, &listIter, item_count-1);
         switch (cerr) {
             case CCPEED_NO_ERR:
                 callResult = OT_COAP_CODE_CHANGED;
@@ -511,8 +497,8 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
                     ESP_LOGD(TAG, "Request is GET");
                     // Encode all attributes as a CBOR map.
                     cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
-                    if (dev->provider->type == DALI_PROVIDER_ID) {
-                        dali_device_encode_attributes((dali_device_t *) dev, aspectId, &encoder);
+                    if (dev->provider->encode_attributes_fn) {
+                        dev->provider->encode_attributes_fn(dev, aspectId, &encoder);
                         len = encoder.data.ptr-buf;
                         responseCode = OT_COAP_CODE_CONTENT;
                     } else {
@@ -594,7 +580,7 @@ static void ot_task_worker(void *aContext)
             },                                                      
         },
         .port_config = {
-            .storage_partition_name = "ot_storage",
+            .storage_partition_name = "nvs",
             .netif_queue_size = 10,        
             .task_queue_size = 10,
         },
@@ -645,17 +631,11 @@ static void ot_task_worker(void *aContext)
 
 
 
-
-static const uint8_t root_config[] = { 
-    0x81,  // We have one provider
-      0x83, // Each provider is an array.
-        0x02, // Provider type 2 (DALI BUS),
-        0x04, // TX pin 4
-        0x05, // RX pin 5
-};
-
-
 static root_provider_t rootProvider;
+#if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
+    static dali_provider_t daliProvider;
+#endif
+
 
 
 void app_main(void) {
@@ -677,5 +657,11 @@ void app_main(void) {
     }
 
     xTaskCreate(ot_task_worker, "ot_cli_main", 10240, xTaskGetCurrentTaskHandle(), 5, NULL);
-    root_provider_init(&rootProvider, (uint8_t *) root_config, sizeof(root_config));
+    root_provider_init(&rootProvider);
+
+
+#if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
+    dali_provider_init(&daliProvider, CONFIG_CCPEED_PROVIDER_DALI_TX_PIN, CONFIG_CCPEED_PROVIDER_DALI_RX_PIN);
+#endif
+
 }

@@ -1,83 +1,72 @@
-menu "Example CoAP Server Configuration"
+menu "CCPEED HomeAuto Configuration"
 
-    config EXAMPLE_WIFI_SSID
-        depends on !EXAMPLE_WIFI_SSID_PWD_FROM_STDIN
-        string "WiFi SSID"
-        default "myssid"
+    config CCPEED_PROVIDER_DALI_ENABLE
+        bool "Enable DALI bus bridge"
+        default false
         help
-            SSID (network name) for the example to connect to.
+            If selected, the DALI bus provider will be enabled, bridging the DALI protocol onto CCPEED protocol
 
-    config EXAMPLE_WIFI_PASSWORD
-        depends on !EXAMPLE_WIFI_SSID_PWD_FROM_STDIN
-        string "WiFi Password"
-        default "mypassword"
+
+    config CCPEED_PROVIDER_DALI_TX_PIN
+        int "TX pin"
+        depends on CCPEED_PROVIDER_DALI_ENABLE
         help
-            WiFi password (WPA or WPA2) for the example to use.
-            Can be left blank if the network has no security set.
+            The GPIO pin that will be used to transmit DALI commands. 
 
-
-    # Hidden option that selects IPv4
-    config EXAMPLE_COAP_NEEDS_IPV4
-        bool
-        default true
-        select LWIP_IPV4
-
-    config EXAMPLE_COAP_PSK_KEY
-        string "Preshared Key (PSK) to used in the connection from the CoAP client"
-        depends on COAP_MBEDTLS_PSK
-        default "secret-key"
+    config CCPEED_PROVIDER_DALI_RX_PIN
+        int "RX pin"
+        depends on CCPEED_PROVIDER_DALI_ENABLE
         help
-            The Preshared Key to use to encrypt the communicatons. The same key must be
-            used at both ends of the CoAP connection, and the CoaP client must request
-            an URI prefixed with coaps:// instead of coap:// for DTLS to be used.
-
-    choice EXAMPLE_COAP_MCAST_IP_MODE
-        prompt "Receive Multicast IP type"
+            The GPIO pin that will be used to receive DALI commands and responses. 
+                 
+    config CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        bool "Enable GPIO buttons"
+        default false
         help
-            Example can receive multicast IPV4, IPV6, both or none.
-
-        config EXAMPLE_COAP_MCAST_NONE
-            bool "None"
-
-        config EXAMPLE_COAP_MCAST_IPV4_V6
-            bool "IPV4 & IPV6"
-            select EXAMPLE_COAP_MCAST_IPV4
-            select EXAMPLE_COAP_MCAST_IPV6
-
-        config EXAMPLE_COAP_MCAST_IPV4_ONLY
-            bool "IPV4"
-            select EXAMPLE_COAP_MCAST_IPV4
-
-        config EXAMPLE_COAP_MCAST_IPV6_ONLY
-            bool "IPV6"
-            select EXAMPLE_COAP_MCAST_IPV6
-
-    endchoice
-
-    config EXAMPLE_COAP_MCAST_IPV4
-        bool
-    config EXAMPLE_COAP_MCAST_IPV6
-        bool
-        select EXAMPLE_CONNECT_IPV6 if IDF_TARGET_ESP32
-
-    config EXAMPLE_COAP_MULTICAST_IPV4_ADDR
-        string "CoAP Multicast IPV4 Address (receive)"
-        default "224.0.1.187"
-        depends on EXAMPLE_COAP_MCAST_IPV4
+            If selected, the DALI bus provider will be enabled, bridging the DALI protocol onto CCPEED protocol
+        
+    config CCPEED_PROVIDER_GPIO_BUTTON_1
+        int "GPIO button #1"
+        depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        default -1
         help
-            IPV4 multicast address to receive multicast traffic on.
+            GPIO pin number to use as button #1.  Set to -1 to disable.
 
-            The default CoAP IPV4 address is 224.0.1.187.
-
-    config EXAMPLE_COAP_MULTICAST_IPV6_ADDR
-        string "CoAP Multicast IPV6 Address (receive)"
-        default "FF02::FD"
-        depends on EXAMPLE_COAP_MCAST_IPV6
+    config CCPEED_PROVIDER_GPIO_BUTTON_2
+        int "GPIO button #2"
+        depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        default -1
         help
-            IPV6 multicast address to receive multicast traffic on.
+            GPIO pin number to use as button #2.  Set to -1 to disable.
+                    
+    config CCPEED_PROVIDER_GPIO_BUTTON_3
+        int "GPIO button #3"
+        depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        default -1
+        help
+            GPIO pin number to use as button #3.  Set to -1 to disable.
 
-            The default CoAP FF02::FD address is a link-local multicast address.
-            Consult IPV6 specifications or documentation for information about
-            meaning of different IPV6 multicast ranges.
+            
+    config CCPEED_PROVIDER_GPIO_BUTTON_4
+        int "GPIO button #4"
+        depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        default -1
+        help
+            GPIO pin number to use as button #4.  Set to -1 to disable.
+        
+    config CCPEED_PROVIDER_GPIO_BUTTON_5
+        int "GPIO button #5"
+        depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        default -1
+        help
+            GPIO pin number to use as button #5.  Set to -1 to disable.
+        
 
+    config CCPEED_PROVIDER_GPIO_6
+        int "GPIO button #6"
+        depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+        default -1
+        help
+            GPIO pin number to use as button #6.  Set to -1 to disable.
+        
 endmenu

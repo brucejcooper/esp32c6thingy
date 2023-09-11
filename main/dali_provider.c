@@ -447,29 +447,16 @@ static void scanDaliBusTask(void *params) {
 }
 
 
-ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it) {
+ccpeed_err_t dali_provider_init(dali_provider_t *self, uint32_t txpin, uint32_t rxpin) {
     provider_init(&self->super, DALI_PROVIDER_ID);
-    CborError err;
 
-    err = cbor_expect_uint32(it, 32, &self->tx_pin);
-    if (err) {
-        return CCPEED_ERROR_INVALID;
-    }
-    err = cbor_value_advance(it);
-    if (err) {
-        return CCPEED_ERROR_INVALID;
-    }
-    
-    err = cbor_expect_uint32(it, 32, &self->rx_pin);
-    if (err) {
-        return CCPEED_ERROR_INVALID;
-    }
-    err = cbor_value_advance(it);
-    if (err) {
-        return CCPEED_ERROR_INVALID;
-    }
+    // Set up function indirection.
+    self->super.set_attr_fn = dali_device_set_attr;
+    self->super.process_service_call_fn = dali_device_process_service_call;
+    self->super.encode_attributes_fn = dali_device_encode_attributes;
 
-
+    self->tx_pin = txpin;
+    self->rx_pin = rxpin;
     // Set up IO
     // The RMT driver will turn GPIO on first, then drive it to its idle value.  To avoid an unwanted pulse, we setup the GPIO first.
     gpio_config_t gpioConfig = {

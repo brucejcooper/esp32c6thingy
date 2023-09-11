@@ -45,8 +45,7 @@ typedef struct {
 } dali_provider_t;
 
 
-
-ccpeed_err_t dali_provider_init(dali_provider_t *self, CborValue *it);
+ccpeed_err_t dali_provider_init(dali_provider_t *self, uint32_t tx, uint32_t rx);
 ccpeed_err_t dali_send_command(dali_provider_t *prov, uint16_t value, TickType_t ticksToWait) ;
 
 
