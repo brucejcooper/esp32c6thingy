@@ -400,7 +400,7 @@ static ccpeed_err_t dali_provider_scan(dali_provider_t *provider) {
             ESP_LOGD(TAG, "Device at DALI gear address %d not found", i);
 
             if (device) {
-                ESP_LOGI(TAG, "Deleting old device %s at DALI gear address %d", device_serial_to_str(&device->super.serial, buf), i);
+                ESP_LOGI(TAG, "Deleting old device %s at DALI gear address %d", device_serial_to_str(&device->super.serial, buf, sizeof(buf)), i);
                 device_delete((device_t *) device);
                 device = NULL;
             }
@@ -422,7 +422,7 @@ static ccpeed_err_t dali_provider_scan(dali_provider_t *provider) {
         } 
         
         if (!device) {
-            ESP_LOGI(TAG, "Creating new device at DALI gear address %d for serial %s", i, device_serial_to_str(&serial, buf));
+            ESP_LOGI(TAG, "Creating new device at DALI gear address %d for serial %s", i, device_serial_to_str(&serial, buf, sizeof(buf)));
             device = malloc(sizeof(dali_device_t));
             if (!device) {
                 return CCPEED_ERROR_NOMEM;
@@ -430,7 +430,7 @@ static ccpeed_err_t dali_provider_scan(dali_provider_t *provider) {
             dali_device_init(device, provider, &serial, shiftedAddr, presentResponse, 0, 0, 0, 0, 0);
             add_device((device_t *) device);
         }
-        ESP_LOGI(TAG, "Updaing parameters of device %s", device_serial_to_str(&device->super.serial, buf));
+        ESP_LOGI(TAG, "Updaing parameters of device %s", device_serial_to_str(&device->super.serial, buf, sizeof(buf)));
         err = dali_device_update_all_attr(device);
         if (err != CCPEED_NO_ERR) {
             return err;

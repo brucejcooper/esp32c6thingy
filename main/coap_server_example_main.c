@@ -221,6 +221,9 @@ static void list_devices_handler(void *aContext, otMessage *request_message, con
     otError error = OT_ERROR_NONE;
     CborEncoder encoder, deviceMapEncoder, deviceEncoder, aspectEncoder;
     uint8_t buf[2000];
+    uint8_t buf2[100];
+    size_t sz2;
+    CborError cerr;
 
     otInstance *instance = esp_openthread_get_instance();
 
@@ -243,7 +246,13 @@ static void list_devices_handler(void *aContext, otMessage *request_message, con
     cbor_encoder_create_map(&encoder, &deviceMapEncoder, device_count());
     for (device_t *dev = device_get_all(); dev != NULL; dev = (device_t *) dev->_llitem.next) {
         // Key
-        cbor_encode_byte_string(&deviceMapEncoder, dev->serial.serial, dev->serial.len);
+        sz2 = sizeof(buf2);
+        cerr = cbor_encode_deviceid(&dev->serial, buf2, &sz2);
+        if (cerr != CborNoError) {
+            ESP_LOGE(TAG, "Error encoding deviceID: %d", cerr);
+            goto end;
+        }
+        cbor_encode_byte_string(&deviceMapEncoder, buf2, sz2);
         // Value
         cbor_encoder_create_array(&deviceMapEncoder, &deviceEncoder, 1);
             // Only field - the array of aspects
@@ -262,7 +271,7 @@ static void list_devices_handler(void *aContext, otMessage *request_message, con
 	}
 
 	error = otCoapSendResponse(instance, response, aMessageInfo);
-	// ESP_LOG_BUFFER_HEXDUMP(TAG, buf, encoder.data.ptr-buf, ESP_LOG_INFO);
+	ESP_LOG_BUFFER_HEXDUMP(TAG, buf, encoder.data.ptr-buf, ESP_LOG_DEBUG);
 
 end:
 	if (error != OT_ERROR_NONE && response != NULL) {
@@ -467,9 +476,10 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
                 break;
             }
 
-            serial.len = pathLen[1];
             // TODO length check.
-            memcpy(serial.serial, pathElem[1], pathLen[1]);
+            //serial.len = pathLen[1];
+            //memcpy(serial.serial, pathElem[1], pathLen[1]);
+	    deviceid_decode(&serial, pathElem[1], pathLen[1]);
 
             device_t *dev = device_find_by_serial(&serial);
             if (dev == NULL) {

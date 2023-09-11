@@ -11,9 +11,28 @@ extern "C" {
 
 #define MAX_ASPECTS 5
 
+typedef enum {
+    DEVID_TYPE_INDEX = 0, // The least specific - Try using _anything_ else. 
+    DEVID_TYPE_GPIOPIN = 1,
+    DEVID_TYPE_SERIAL_NUMBER = 2,
+    DEVID_TYPE_MAC = 3,
+    DEVID_TYPE_GTIN = 4, // https://www.gs1.org/standards/id-keys/gtin
+} ccpeed_device_identifier_part_type_t;
+
+
+#define MAX_DEVICE_ID_DATALEN 16
+#define MAX_DEVICE_ID_DEPTH 2
+
 typedef struct {
-    uint8_t serial[20];
+    ccpeed_device_identifier_part_type_t type;
+    uint8_t data[MAX_DEVICE_ID_DATALEN];
     size_t len;
+} ccpeed_device_identifier_part_t;
+
+
+typedef struct {
+    size_t num_parts;
+    ccpeed_device_identifier_part_t parts[MAX_DEVICE_ID_DEPTH];
 } device_serial_t;
 
 
@@ -35,8 +54,11 @@ void device_delete(device_t *dev);
 bool device_has_aspect(device_t *dev, int aspect);
 device_t *device_get_all();
 bool device_serial_equals(device_serial_t *s1, device_serial_t *s2);
-char *device_serial_to_str(device_serial_t *serial, char *out);
+char *device_serial_to_str(device_serial_t *serial, char *out, size_t sz);
 int device_count();
+
+CborError cbor_encode_deviceid(device_serial_t *ser, uint8_t *out, size_t *outsz);
+ccpeed_err_t deviceid_decode(device_serial_t *serial, uint8_t *buf, size_t sz);
 
 #ifdef __cplusplus
 }
