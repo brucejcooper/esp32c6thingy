@@ -4,7 +4,7 @@
 #include "cbor_helpers.h"
 #include "esp_log.h"
 
-static const char *TAG = "device";
+// static const char *TAG = "device";
 
 
 static const char *device_id_type_names[] = {
@@ -31,13 +31,14 @@ void add_device(device_t *dev) {
 }
 
 
-void device_init(device_t *dev, provider_base_t *provider, device_serial_t *serial, int *aspects, size_t num_apsects) {
+void device_init(device_t *dev, provider_base_t *provider, device_identifier_t *serial, int *aspects, size_t num_apsects) {
     ll_init_item(&dev->_llitem);
     dev->provider = provider;
-    memcpy(&(dev->serial), serial, sizeof(device_serial_t));
+    memcpy(&(dev->id), serial, sizeof(device_identifier_t));
     memcpy(dev->aspects, aspects, num_apsects*sizeof(int));
     dev->num_aspects = num_apsects;
 }
+
 
 /**
  * @brief Determines if two serial numbers are equal.
@@ -47,7 +48,7 @@ void device_init(device_t *dev, provider_base_t *provider, device_serial_t *seri
  * @return true 
  * @return false 
  */
-bool device_serial_equals(device_serial_t *s1, device_serial_t *s2) {
+bool device_identifier_equals(device_identifier_t *s1, device_identifier_t *s2) {
     if (s1->num_parts != s2->num_parts) {
         return false;
     }
@@ -68,9 +69,9 @@ bool device_serial_equals(device_serial_t *s1, device_serial_t *s2) {
 }
 
 
-device_t *device_find_by_serial(device_serial_t *serial) {
+device_t *device_find_by_id(device_identifier_t *id) {
     for (device_t *d = (device_t *) devices.head; d != NULL; d = (device_t *) d->_llitem.next) {
-        if (device_serial_equals(serial, &d->serial)) {
+        if (device_identifier_equals(id, &d->id)) {
             return d;
         }
     }
@@ -97,7 +98,7 @@ static inline char hexToChar(unsigned int val) {
 }
 
 
-char *device_serial_to_str(device_serial_t *serial, char *out, size_t sz) {
+char *device_identifier_to_str(device_identifier_t *serial, char *out, size_t sz) {
     char *ptr = out;
     uint8_t *bufptr;
     int res;
@@ -176,7 +177,7 @@ int device_count() {
 
 
 
-CborError cbor_encode_deviceid(device_serial_t *ser, uint8_t *out, size_t *outsz) {
+CborError cbor_encode_deviceid(device_identifier_t *ser, uint8_t *out, size_t *outsz) {
     CborEncoder arrEnc, itemEnc;
     CborEncoder enc;
     CborError err;
@@ -215,7 +216,7 @@ CborError cbor_encode_deviceid(device_serial_t *ser, uint8_t *out, size_t *outsz
     return CborNoError;
 }
 
-ccpeed_err_t deviceid_decode(device_serial_t *serial, uint8_t *buf, size_t sz) {
+ccpeed_err_t deviceid_decode(device_identifier_t *serial, uint8_t *buf, size_t sz) {
     CborParser parser;
     CborValue val, arr, item;
     CborError err;

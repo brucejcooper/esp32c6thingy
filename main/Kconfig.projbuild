@@ -62,7 +62,7 @@ menu "CCPEED HomeAuto Configuration"
             GPIO pin number to use as button #5.  Set to -1 to disable.
         
 
-    config CCPEED_PROVIDER_GPIO_6
+    config CCPEED_PROVIDER_GPIO_BUTTON_6
         int "GPIO button #6"
         depends on CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
         default -1

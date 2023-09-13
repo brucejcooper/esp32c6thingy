@@ -29,6 +29,7 @@
 
 #include "root_provider.h"
 #include "dali_provider.h"
+#include "gpio_input_provider.h"
 #include "dali_device.h"
 #include "provider.h"
 #include "aspect_on_off.h"
@@ -69,7 +70,7 @@ typedef enum {
 } device_aspect_type_t;
 
 typedef struct {
-    device_serial_t target;
+    device_identifier_t target;
     device_aspect_type_t aspect;
     uint32_t serviceId;
     uint8_t *arguments; // CBOR encoded array, or NULL for none.
@@ -247,7 +248,7 @@ static void list_devices_handler(void *aContext, otMessage *request_message, con
     for (device_t *dev = device_get_all(); dev != NULL; dev = (device_t *) dev->_llitem.next) {
         // Key
         sz2 = sizeof(buf2);
-        cerr = cbor_encode_deviceid(&dev->serial, buf2, &sz2);
+        cerr = cbor_encode_deviceid(&dev->id, buf2, &sz2);
         if (cerr != CborNoError) {
             ESP_LOGE(TAG, "Error encoding deviceID: %d", cerr);
             goto end;
@@ -438,7 +439,7 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
     size_t pathLen[3];
     CborEncoder encoder;
  
-    device_serial_t serial;
+    device_identifier_t identifier;
     int numPath = 0;
 
     ESP_LOGD(TAG, "Handling request");
@@ -476,12 +477,9 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
                 break;
             }
 
-            // TODO length check.
-            //serial.len = pathLen[1];
-            //memcpy(serial.serial, pathElem[1], pathLen[1]);
-	    deviceid_decode(&serial, pathElem[1], pathLen[1]);
+    	    deviceid_decode(&identifier, pathElem[1], pathLen[1]);
 
-            device_t *dev = device_find_by_serial(&serial);
+            device_t *dev = device_find_by_id(&identifier);
             if (dev == NULL) {
                 ESP_LOGI(TAG, "Couldn't find device");
                 responseCode = OT_COAP_CODE_NOT_FOUND;
@@ -646,6 +644,29 @@ static root_provider_t rootProvider;
     static dali_provider_t daliProvider;
 #endif
 
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1 != -1
+    static gpio_input_provider_t gpio_input_provider1;
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2 != -1
+    static gpio_input_provider_t gpio_input_provider2;
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3 != -1
+    static gpio_input_provider_t gpio_input_provider3;
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4 != -1
+    static gpio_input_provider_t gpio_input_provider4;
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5 != -1
+    static gpio_input_provider_t gpio_input_provider5;
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6 != -1
+    static gpio_input_provider_t gpio_input_provider6;
+#endif
+
+
+
+#endif
 
 
 void app_main(void) {
@@ -673,5 +694,27 @@ void app_main(void) {
 #if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
     dali_provider_init(&daliProvider, CONFIG_CCPEED_PROVIDER_DALI_TX_PIN, CONFIG_CCPEED_PROVIDER_DALI_RX_PIN);
 #endif
+
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1 != -1
+    gpio_input_provider_init(&gpio_input_provider1, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1);
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2 != -1
+    gpio_input_provider_init(&gpio_input_provider2, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2);
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3 != -1
+    gpio_input_provider_init(&gpio_input_provider3, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3);
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4 != -1
+    gpio_input_provider_init(&gpio_input_provider4, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4);
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5 != -1
+    gpio_input_provider_init(&gpio_input_provider5, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5);
+#endif
+#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6 != -1
+    gpio_input_provider_init(&gpio_input_provider6, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6);
+#endif
+#endif
+
 
 }

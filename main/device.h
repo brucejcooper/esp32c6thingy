@@ -33,13 +33,13 @@ typedef struct {
 typedef struct {
     size_t num_parts;
     ccpeed_device_identifier_part_t parts[MAX_DEVICE_ID_DEPTH];
-} device_serial_t;
+} device_identifier_t;
 
 
 typedef struct device_t {
     linked_list_item_t _llitem;
     provider_base_t *provider;
-    device_serial_t serial;
+    device_identifier_t id;
     int aspects[MAX_ASPECTS];
     size_t num_aspects;
 } device_t;
@@ -47,18 +47,18 @@ typedef struct device_t {
 
 void add_device(device_t *dev);
 
-void device_init(device_t *dev, provider_base_t *provider,  device_serial_t *serial, int *aspect, size_t num_apsects);
+void device_init(device_t *dev, provider_base_t *provider,  device_identifier_t *id, int *aspects, size_t num_apsects);
 
-device_t *device_find_by_serial(device_serial_t *serial);
+device_t *device_find_by_id(device_identifier_t *id);
 void device_delete(device_t *dev);
 bool device_has_aspect(device_t *dev, int aspect);
 device_t *device_get_all();
-bool device_serial_equals(device_serial_t *s1, device_serial_t *s2);
-char *device_serial_to_str(device_serial_t *serial, char *out, size_t sz);
+bool device_identifier_equals(device_identifier_t *s1, device_identifier_t *s2);
+char *device_identifier_to_str(device_identifier_t *id, char *out, size_t sz);
 int device_count();
 
-CborError cbor_encode_deviceid(device_serial_t *ser, uint8_t *out, size_t *outsz);
-ccpeed_err_t deviceid_decode(device_serial_t *serial, uint8_t *buf, size_t sz);
+CborError cbor_encode_deviceid(device_identifier_t *ser, uint8_t *out, size_t *outsz);
+ccpeed_err_t deviceid_decode(device_identifier_t *id, uint8_t *buf, size_t sz);
 
 #ifdef __cplusplus
 }

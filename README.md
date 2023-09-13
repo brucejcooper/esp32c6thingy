@@ -12,7 +12,7 @@ We support multip device types.  This is handled with sdkconfig files, one for e
 
 For example, to build the dali-brdige variant, run
 ```sh
-SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.dalibridge'  idf.py -B build.dalibridge build
+SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.dalibridge' IDF_TARGET=esp32c6 idf.py -B build.dalibridge build
 ```
 
 Then when flashing
@@ -20,3 +20,11 @@ Then when flashing
 ```sh
 idf.py -B build.dalibridge flash monitor
 ```
+
+
+
+# Sample Device IDS
+These are the devices that I tested with:
+
+1. Relay     - GTIN 9006210757131, SERIAL: 0000000000.b50f08
+1. LED Light - GTIN 8720053680265, SERIAL: 38581a0000.690292

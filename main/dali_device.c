@@ -26,7 +26,7 @@
 #define DALI_DEVICE_GET_PROVIDER(d) ((dali_provider_t *) d->super.provider)
 #define CMD_WAIT_TIMEOUT pdMS_TO_TICKS(500)
 
-void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_serial_t *serial, uint16_t addr, uint8_t lightType, uint8_t level, uint8_t min_level, uint8_t max_level, uint8_t power_on_level, uint16_t group_membership) {
+void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_identifier_t *serial, uint16_t addr, uint8_t lightType, uint8_t level, uint8_t min_level, uint8_t max_level, uint8_t power_on_level, uint16_t group_membership) {
     int aspects[2] = {
         ASPECT_ON_OFF_ID,
         ASPECT_BRIGHTNESS_ID
@@ -145,21 +145,21 @@ ccpeed_err_t dali_device_update_all_attr(dali_device_t *device) {
 }
 
 
-ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, device_serial_t *serial) {
+ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, device_identifier_t *ident) {
     ccpeed_err_t res;
     
-    serial->num_parts = 2;
+    ident->num_parts = 2;
     
-    serial->parts[0].type = DEVID_TYPE_GTIN;
-    serial->parts[0].len = 6;
-    if ((res = read_memory(provider, addr, 0, 3, serial->parts[0].data, 6)) != CCPEED_NO_ERR) {
+    ident->parts[0].type = DEVID_TYPE_GTIN;
+    ident->parts[0].len = 6;
+    if ((res = read_memory(provider, addr, 0, 3, ident->parts[0].data, 6)) != CCPEED_NO_ERR) {
         ESP_LOGW(TAG, "Error reading GTIN of addr %d: %d", res, DALI_ID_FROM_ADDR(addr));
         return CCPEED_ERROR_BUS_ERROR;
     };
 
-    serial->parts[1].type = DEVID_TYPE_SERIAL_NUMBER;
-    serial->parts[1].len = 8;
-    if ((res = read_memory(provider, addr, 0, 10, serial->parts[1].data, 8)) != CCPEED_NO_ERR) {
+    ident->parts[1].type = DEVID_TYPE_SERIAL_NUMBER;
+    ident->parts[1].len = 8;
+    if ((res = read_memory(provider, addr, 0, 11, ident->parts[1].data, 8)) != CCPEED_NO_ERR) {
         ESP_LOGW(TAG, "Error reading serial of addr %d: %d", res, DALI_ID_FROM_ADDR(addr));
         return CCPEED_ERROR_BUS_ERROR;
     };
@@ -172,7 +172,7 @@ ccpeed_err_t dali_device_encode_attributes(device_t *self, int aspect_id, CborEn
     CborEncoder attributeEncoder;
     char buf[60];
 
-    ESP_LOGI(TAG, "Encoding attributes for device %s, aspect %d", device_serial_to_str(&dev->super.serial, buf, sizeof(buf)), aspect_id);
+    ESP_LOGI(TAG, "Encoding attributes for device %s, aspect %d", device_identifier_to_str(&dev->super.id, buf, sizeof(buf)), aspect_id);
     switch (aspect_id) {
         case ASPECT_ON_OFF_ID:
             cbor_encoder_create_map(encoder, &attributeEncoder, 1);
@@ -215,7 +215,7 @@ static ccpeed_err_t dali_device_fetch_level(dali_device_t *self) {
     char buf[60];
     int res = dali_send_command((dali_provider_t *)self->super.provider, self-> address | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(200));
     if (res >= 0) {
-        ESP_LOGI(TAG, "Device %s level is now %d", device_serial_to_str(&self->super.serial, buf, sizeof(buf)), res);
+        ESP_LOGI(TAG, "Device %s level is now %d", device_identifier_to_str(&self->super.id, buf, sizeof(buf)), res);
         self->level = res;
         // TODO notify listeners of new level
         return CCPEED_NO_ERR;
@@ -312,7 +312,7 @@ static ccpeed_err_t dali_device_set_numeric_config(dali_device_t *dev, const cha
             break;
     }
     *out = ival;
-    ESP_LOGI(TAG, "device %s.%s set to %d", device_serial_to_str(&dev->super.serial, buf, sizeof(buf)), attrName, dev->max_level);
+    ESP_LOGI(TAG, "device %s.%s set to %d", device_identifier_to_str(&dev->super.id, buf, sizeof(buf)), attrName, dev->max_level);
     return CCPEED_NO_ERR;
 }
 
@@ -331,7 +331,7 @@ static ccpeed_err_t dali_device_set_is_on(dali_device_t *self, bool val) {
             return cerr;
         }
     }
-    ESP_LOGI(TAG, "device %s is_on set to %s", device_serial_to_str(&self->super.serial, buf, sizeof(buf)), val ? "true" : "false");
+    ESP_LOGI(TAG, "device %s is_on set to %s", device_identifier_to_str(&self->super.id, buf, sizeof(buf)), val ? "true" : "false");
     return dali_device_wait_for_fade(self) || dali_device_fetch_level(self);
 }
 
@@ -393,7 +393,7 @@ ccpeed_err_t dali_device_process_service_call(device_t *self, int aspectId, int 
                         ESP_LOGW(TAG, "Toggle has no parameters");
                         return CCPEED_ERROR_INVALID;
                     }
-                    ESP_LOGI(TAG, "Device %s toggling is_on", device_serial_to_str(&device->super.serial, buf, sizeof(buf)));
+                    ESP_LOGI(TAG, "Device %s toggling is_on", device_identifier_to_str(&device->super.id, buf, sizeof(buf)));
                     if (device->level) {
                         cerr = dali_device_send_command(device, DALI_CMD_OFF);
                         if (cerr != CCPEED_NO_ERR) {
