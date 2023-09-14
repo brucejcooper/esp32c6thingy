@@ -31,7 +31,6 @@ typedef enum {
     BTN_EVT_PRESSED,
     BTN_EVT_RELEASED,
     BTN_EVT_LONG_PRESS,
-    BTN_EVT_LONG_PRESS_REPEAT,
     BTN_EVT_CLICK,
 } button_event_type_t;
 

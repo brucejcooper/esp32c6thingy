@@ -21,14 +21,15 @@ static QueueHandle_t button_action_queue = NULL;
 
 const static char *TAG = "buttons";
 
-#define DEBOUNCE_USEC (50*1000)
+#define DEBOUNCE_USEC (75*1000)
 #define LONGPRESS_USEC (750*1000)
 #define LONGPRESS_REPEAT_USEC (250*1000)
 
-#define REPEAT_CLICK_TIMEOUT_TICKS (200*1000)
+#define REPEAT_CLICK_TIMEOUT_TICKS (100*1000)
 
 // How long between press and release to count as a click.
-#define CLICK_THRESHOLD_TICKS pdMS_TO_TICKS(750)
+// By default this is anything up to the LONG_PRESS timeout.
+#define CLICK_THRESHOLD_TICKS pdMS_TO_TICKS(LONGPRESS_USEC/1000)
 
 
 
@@ -168,7 +169,7 @@ static void timer_expired(void *args) {
             break;
 
         case BTN_STATE_PRESSED:
-            emit_device_event(device, device->repeat_count++ ? BTN_EVT_LONG_PRESS_REPEAT : BTN_EVT_LONG_PRESS, ts, true);
+            emit_device_event(device, BTN_EVT_LONG_PRESS, ts, true);
             esp_timer_start_once(device->timer, LONGPRESS_REPEAT_USEC);
             break;
 
@@ -184,7 +185,6 @@ static const char *event_names[] = {
     "pressed",
     "released",
     "long press",
-    "repeat",
     "click",
 };
 
