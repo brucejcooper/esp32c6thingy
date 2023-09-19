@@ -42,6 +42,13 @@ typedef struct {
     unsigned int repeatCount;
 } button_event_t;
 
+typedef struct {
+    device_identifier_t target;
+    uint32_t targetAspect;
+    int32_t targetId; // +ve for attribute, -ve for serviceId.
+
+    uint8_t *expression[64]; // CBOR object. 
+} button_action_config_t;
 
 typedef struct {
     device_t super;
@@ -52,6 +59,8 @@ typedef struct {
     unsigned int click_count;
     unsigned int repeat_count;
     esp_timer_handle_t timer;
+
+
 } gpio_input_device_t;
 
 

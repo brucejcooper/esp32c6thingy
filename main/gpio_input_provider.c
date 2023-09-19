@@ -21,7 +21,7 @@ static QueueHandle_t button_action_queue = NULL;
 
 const static char *TAG = "buttons";
 
-#define DEBOUNCE_USEC (75*1000)
+#define DEBOUNCE_USEC (100*1000)
 #define LONGPRESS_USEC (750*1000)
 #define LONGPRESS_REPEAT_USEC (250*1000)
 
@@ -74,6 +74,7 @@ static void gpio_input_device_set_state(gpio_input_device_t *self, button_state_
             emit_device_event(self, BTN_EVT_RELEASED, ts, true);
             esp_timer_start_once(self->timer, DEBOUNCE_USEC);
             break;
+
 
         case BTN_STATE_PRESSED:
             esp_timer_start_once(self->timer, LONGPRESS_USEC);
