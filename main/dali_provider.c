@@ -9,14 +9,13 @@
 #include "freertos/event_groups.h"
 #include "provider.h"
 #include "device.h"
-#include "aspect_on_off.h"
-#include "aspect_brightness.h"
+#include "interface_switch.h"
+#include "interface_brightness.h"
 #include <string.h>
 #include "cbor_helpers.h"
 #include "dali_device.h"
 
 #include "esp_log.h"
-#include "aspect_on_off.h"
 #include "linked_list.h"
 
 
@@ -448,12 +447,7 @@ static void scanDaliBusTask(void *params) {
 
 
 ccpeed_err_t dali_provider_init(dali_provider_t *self, uint32_t txpin, uint32_t rxpin) {
-    provider_init(&self->super, DALI_PROVIDER_ID);
-
-    // Set up function indirection.
-    self->super.set_attr_fn = dali_device_set_attr;
-    self->super.process_service_call_fn = dali_device_process_service_call;
-    self->super.encode_attributes_fn = dali_device_encode_attributes;
+    provider_init(&self->super, DALI_PROVIDER_ID, dali_device_encode_attributes, dali_device_set_attr, dali_device_process_service_call);
 
     self->tx_pin = txpin;
     self->rx_pin = rxpin;

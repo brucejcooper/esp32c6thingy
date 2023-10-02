@@ -15,6 +15,8 @@ extern "C" {
 #include "ccpeed_err.h"
 #include "dali_provider.h"
 #include "device.h"
+#include "interface_switch.h"
+#include "interface_brightness.h"
 
 
 // Device Addressed Commands (all have bit 8 set)
@@ -130,17 +132,15 @@ typedef struct {
 
     uint8_t lightType;
     uint16_t group_membership;
-    uint8_t level;
-    uint8_t min_level;
-    uint8_t max_level;
-    uint8_t power_on_level;
+    thingif_switch_attr_t switch_attr;
+    thingif_brightness_attr_t brightness_attr;
 } dali_device_t;
 
 
 
 void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_identifier_t *serial, uint16_t addr, uint8_t lightType, uint8_t level, uint8_t min_level, uint8_t max_level, uint8_t power_on_level, uint16_t group_membership);
 ccpeed_err_t dali_device_encode_attributes(device_t *_dev, int aspect_id, CborEncoder *encoder);
-ccpeed_err_t dali_device_set_attr(device_t *_dev, int aspect_id, int attr_id, CborValue *val);
+ccpeed_err_t dali_device_set_attr(device_t *_dev, int aspect_id, CborValue *val);
 ccpeed_err_t dali_device_process_service_call(device_t *device, int aspectId, int serviceId, CborValue *attr, size_t attr_count);
 dali_device_t *dali_device_find_by_addr(uint16_t addr);
 ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, device_identifier_t *serial);

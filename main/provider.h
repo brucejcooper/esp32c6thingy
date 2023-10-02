@@ -12,9 +12,9 @@ extern "C" {
 // Forward reference to the device_t type. 
 struct device_t;
 
-typedef ccpeed_err_t (*device_set_attr_fn)(struct device_t *dev, int aspect_id, int attr_id, CborValue *val);
-typedef ccpeed_err_t (*device_process_service_call_fn)(struct device_t *device, int aspectId, int serviceId, CborValue *params, size_t numParams);
-typedef ccpeed_err_t (*device_encode_attributes_fn)(struct device_t *dev, int aspect_id, CborEncoder *encoder);
+typedef ccpeed_err_t (*device_set_attr_fn)(struct device_t *dev, int iface_id, CborValue *val);
+typedef ccpeed_err_t (*device_process_service_call_fn)(struct device_t *device, int iface_id, int serviceId, CborValue *params, size_t numParams);
+typedef ccpeed_err_t (*device_encode_attributes_fn)(struct device_t *dev, int iface_id, CborEncoder *encoder);
 
 
 typedef struct provider_base_t {
@@ -27,7 +27,7 @@ typedef struct provider_base_t {
 } provider_base_t;
 
 
-void provider_init(provider_base_t *provider, int type);
+void provider_init(provider_base_t *provider, int type, device_encode_attributes_fn getter, device_set_attr_fn setter, device_process_service_call_fn servicefn);
 void add_provider(provider_base_t *prov);
 provider_base_t *get_all_providers();
 

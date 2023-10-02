@@ -3,86 +3,16 @@
 #include <string.h>
 #include <esp_log.h>
 #include "ast.h"
-
-
-/*
- Exmaple AST:
- evt.clickCount == 1 ? [[], ASPECT_ON_OFF, TOGGLE] : [[], ASPECT_BRIGHTNESS, RECALL_MAX]
-
-CONDITIONAL:
-    EQUALS:
-        INDEX:
-            PARAM(0)
-            LITERAL(CLICK_COUNT_IDX)
-        LITERAL(1)
-
-    LITERAL(ARRAY):
-        LITERAL(ARRAY):
-            UINT(GTIN)
-            BYTESTRING(abcdef),
-            UINT(SERIAL)
-            BYTESTRING(abcdef),
-        UINT(ASPECT_ON_OFF),
-        UINT(TOGGLE)
-
-    ARRAY:
-        ARRAY:
-            INT(GTIN)
-            BYTESTRING(abcdef),
-            INT(SERIAL)
-            BYTESTRING(abcdef),
-        UINT(ASPECT_BRIGHTNESS)
-        UINT(RECALL_MAX)
-
-
-= [CONDITIONAL, [EQUALS, [INDEX, [PARAM 0], 0], 1], [ARRAY, [ARRAY, GTIN, BYTESTRING, SERIAL, BYTESTRING], ASPECT_ON_OFF, TOGGLE], [ARRAY, [ARRAY, GTIN, BYTESTRING, SERIAL, BYTESTRING], ASPECT_BRIGHTNESS, RECALL_MAX]]
-
-Another example
-
-[[], ASPECT_BRIGHTNESS, evt.clickCount % 2 ? 1 : -1]
-
-ARRAY:
-    ARRAY:
-        UINT(GTIN)
-        BYTESTRING(abcdef),
-        UINT(SERIAL)
-        BYTESTRING(abcdef),
-    UINT(ASPECT_BRIGHTNESS)
-    CONDITIONAL:
-        MODULO:
-            INDEX:
-                PARAM(0)
-                UINT(CLICK_COUNT_IDX)
-            2
-        UINT(1)
-        INT(-1)
-
-
-
-When dealing with an array or map, we want to have multiple values on the stack.  You can do it by pushing
-each of its individual values, then pushing a final Array/Map marker node, with a size. 
- */
+#include "device.h"
+#include "interface_switch.h"
+#include "interface_brightness.h"
 
 
 
 
-
-typedef enum {
-    AST_TYPE_CONDITIONAL, // ? operator
-    AST_TYPE_EQUALS,      // == operator
-    AST_TYPE_MODULUS,     // % operator
-    AST_TYPE_PLUS,
-    AST_TYPE_MINUS,
-    AST_TYPE_MULTIPLY,
-    AST_TYPE_DIVIDE,
-    AST_TYPE_NOT,
-    AST_TYPE_PARAM,       // Push the numbered parameter onto the stack.
-    AST_TYPE_INDEX,       // [] or . - fetch a subitem - First is a map or array, second is an index.
-    AST_TYPE_LITERAL,
-    AST_TYPE_ARRAY,
-    AST_TYPE_MAP,
-} ast_operator_type_t;
-
+/**
+ Lookup of values for each of the ast_operator_type_t types up until LITERAL.  All subsequent values have got different amounts. 
+*/
 static const size_t expected_children[] = {
     3,
     2,
@@ -92,51 +22,11 @@ static const size_t expected_children[] = {
     2,
     2,
     1,
-    2,
+    1,
     2
 };
 
-
-typedef enum {
-    AST_LITERAL_NULL,
-    AST_LITERAL_INT,
-    AST_LITERAL_BYTESTRING,
-    AST_LITERAL_ARRAY,
-    AST_LITERAL_MAP,
-    AST_LITERAL_OBJECT,
-} ast_literal_type_t;
-
-typedef struct {
-    uint8_t *data;
-    size_t sz; 
-} bytestring_t;
-
-typedef struct {
-    ast_literal_type_t type;
-    // Can be values or children nodes, or whatever, depending on type
-    union {
-        int32_t intVal;
-        bytestring_t bytes; // Used for both byte strings and character strings.
-        void *ptr;   // Used for object. 
-    };
-} ast_literal_t;
-
-
-
-typedef struct ast_node_t {
-    ast_operator_type_t op;
-    ast_literal_t value;
-    struct ast_node_t *children;
-    size_t num_children;
-} ast_node_t;
-
-
-typedef struct {
-    ast_literal_t *base;
-    ast_literal_t *ptr;
-    size_t capacity;
-} ast_stack_t;
-
+static const char *TAG = "ast";
 
 static const ast_literal_t nullVal = {
     .type = AST_LITERAL_NULL,
@@ -144,27 +34,42 @@ static const ast_literal_t nullVal = {
 };
 
 
+bool ast_stack_alloc(ast_stack_t *stack, size_t sz) {
+    stack->base = malloc(sz*sizeof(ast_literal_t));
+    if (!stack->base) {
+        return false;
+    }
+    stack->capacity = sz;
+    stack->ptr = stack->base;
 
-void ast_stack_push_intlike(ast_literal_type_t type, int32_t val, ast_stack_t *stack) {
+    return true;
+}
+
+void ast_stack_free(ast_stack_t *stack) {
+    free(stack->base);
+    stack->base = stack->ptr = NULL;
+}
+
+static void ast_stack_push_intlike(ast_literal_type_t type, int32_t val, ast_stack_t *stack) {
     assert(stack->ptr - stack->base < stack->capacity);
     stack->ptr->type = type;
     stack->ptr->intVal = val;
     stack->ptr++;
 }
 
-void ast_stack_push(ast_literal_t *literal, ast_stack_t *stack) {
+static void ast_stack_push(ast_literal_t *literal, ast_stack_t *stack) {
     assert(stack->ptr - stack->base < stack->capacity);
     memcpy(stack->ptr, literal, sizeof(ast_literal_t));
     stack->ptr++;
 }
 
-void ast_stack_pop(ast_literal_t *val, ast_stack_t *stack) {
+static void ast_stack_pop(ast_literal_t *val, ast_stack_t *stack) {
     assert (stack->ptr > stack->base);
     memcpy(val, stack->ptr, sizeof(ast_literal_t));
     stack->ptr--;
 }
 
-int32_t ast_stack_popint(ast_stack_t *stack) {
+static int32_t ast_stack_popint(ast_stack_t *stack) {
     assert(stack->ptr > stack->base);
     assert(stack->ptr->type == AST_LITERAL_INT);
     int32_t i1 = stack->ptr->intVal;
@@ -174,9 +79,10 @@ int32_t ast_stack_popint(ast_stack_t *stack) {
 }
 
 
-void ast_execute(ast_node_t *n, void *param0, ast_stack_t *stack) {
+void ast_execute(ast_node_t *n, ast_parameter_t *param0, ast_stack_t *stack) {
     int32_t i1, i2, res;
-    ast_literal_t lit;
+    ast_literal_t lit,lit2;
+    ccpeed_err_t cerr;
 
     assert(n);
 
@@ -225,13 +131,10 @@ void ast_execute(ast_node_t *n, void *param0, ast_stack_t *stack) {
             ast_stack_pop(&lit, stack);
             assert(lit.type == AST_LITERAL_OBJECT);
 
-            switch (i1) {
-                case 0:
-                    ast_stack_push_intlike(AST_LITERAL_INT, ((button_event_t *) lit.ptr)->clickCount, stack);
-                    break;
-                default:
-                    assert(false);
-            }
+            cerr = param0->field_fetcher(((ast_parameter_t *) lit.ptr)->ptr, i1, &lit2);
+            assert(cerr == CCPEED_NO_ERR);
+
+            ast_stack_push(&lit2, stack);
             break;
 
         case AST_TYPE_ARRAY:
@@ -293,9 +196,52 @@ void ast_execute(ast_node_t *n, void *param0, ast_stack_t *stack) {
 
 
 CborError ast_serialise_to_cbor(ast_node_t *node, CborEncoder *enc) {
+    CborEncoder nodeEncoder;
+    CborError err;
 
-
-    
+    switch (node->op) {
+        case AST_TYPE_LITERAL:
+            switch (node->value.type) {
+                case AST_LITERAL_INT:
+                    err = cbor_encode_int(enc, node->value.intVal);
+                    if (err != CborNoError) {
+                        return err;
+                    }
+                    break;
+                case AST_LITERAL_NULL:
+                    err = cbor_encode_null(enc);
+                    if (err != CborNoError) {
+                        return err;
+                    }
+                    break;
+                case AST_LITERAL_BYTESTRING:
+                    err = cbor_encode_byte_string(enc, node->value.bytes.data, node->value.bytes.sz);
+                    if (err != CborNoError) {
+                        return err;
+                    }
+                    break;
+                default:
+                    return CborErrorImproperValue;
+            }
+            break;
+        default:
+            err = cbor_encoder_create_array(enc, &nodeEncoder, node->num_children+1);
+            if (err != CborNoError) {
+                return err;
+            }
+            err = cbor_encode_uint(&nodeEncoder, node->op);
+            if (err != CborNoError) {
+                return err;
+            }
+            for (int i = 0; i < node->num_children; i++) {
+                ast_serialise_to_cbor(node->children+i, &nodeEncoder);
+            }
+            err = cbor_encoder_close_container(enc, &nodeEncoder);
+            if (err != CborNoError) {
+                return err;
+            }
+            break;
+    }
     return CborNoError;
 }
 
@@ -306,22 +252,30 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node) {
     size_t arrayLength;
     bool bVal;
     int iVal;
-    size_t szVal;
 
     if (cbor_value_is_array(val)) {
         cbor_value_get_array_length(val, &arrayLength);
+        if (arrayLength < 1) {
+            ESP_LOGW(TAG, "Operator array with no operator");
+            return CborErrorImproperValue;
+        }
+
         err = cbor_value_enter_container(val, &nodeIter);
         if (err != CborNoError) {
+            ESP_LOGW(TAG, "Error entering container: %d", err);
             return err;
         }
 
         err = cbor_value_get_uint64(&nodeIter, &ui);
         if (err != CborNoError) {
+            ESP_LOGW(TAG, "Error getting operand: %d", err);
             return err;
         }
         node->op = ui;
+        ESP_LOGD(TAG, "Operator %d ", node->op);
         err = cbor_value_advance(&nodeIter);
         if (err != CborNoError) {
+            ESP_LOGD(TAG, "Error advancing after operator: %d", err);
             return err;
         }
         arrayLength--;
@@ -329,6 +283,7 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node) {
         // Most nodes have a specified number of children.  ARRAY and MAP do not.
         if (node->op != AST_TYPE_ARRAY && node->op != AST_TYPE_MAP) {
             if (expected_children[node->op] != arrayLength) {
+                ESP_LOGW(TAG, "Improper number of children for operator %d - Expected %d but got %d", node->op, expected_children[node->op], arrayLength);
                 return CborErrorImproperValue;
             }
         }
@@ -336,41 +291,47 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node) {
         node->num_children = arrayLength;
         node->children = malloc(sizeof(ast_node_t) * node->num_children);
         if (!node->children) {
+            ESP_LOGW(TAG, "Could not create child array");
             return CborErrorOutOfMemory;
         }
 
         for (int i = 0; i < node->num_children; i++) {
-            ast_parse_from_cbor(&nodeIter, node->children+i);
-            err = cbor_value_advance(&nodeIter);
+            err = ast_parse_from_cbor(&nodeIter, node->children+i);
             if (err != CborNoError) {
+                ESP_LOGW(TAG, "Error parsing child node %d: %d", i, err);
                 free(node->children);
                 return err;
             }
         }
-
         err = cbor_value_leave_container(val, &nodeIter);
         if (err != CborNoError) {
             free(node->children);
+            ESP_LOGW(TAG, "Error leaving container: %d", err);
             return err;
         }
     } else {
         node->children = NULL;
         node->num_children = 0;
         node->op = AST_TYPE_LITERAL;
+        ui = cbor_value_get_type(val);
 
-        switch (cbor_value_get_type(val)) {
+        switch (ui) {
             case CborIntegerType:
+                ESP_LOGD(TAG, "Literal Integer");
                 node->value.type = AST_LITERAL_INT;
-                err = cbor_value_get_int(&nodeIter, &iVal);
+                err = cbor_value_get_int(val, &iVal);
                 if (err != CborNoError) {
+                    ESP_LOGW(TAG, "Error parsing integer value");
                     return err;
                 }
+                ESP_LOGD(TAG, "Value is %d", iVal);
                 node->value.intVal = iVal;
                 break;
 
             case CborBooleanType:
+                ESP_LOGD(TAG, "Literal Boolean");
                 node->value.type = AST_LITERAL_INT;
-                err = cbor_value_get_boolean(&nodeIter, &bVal);
+                err = cbor_value_get_boolean(val, &bVal);
                 if (err != CborNoError) {
                     return err;
                 }
@@ -379,12 +340,14 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node) {
 
             // We reate Null and Undefined the same. 
             case CborNullType:
+                ESP_LOGD(TAG, "Literal Null");
                 node->value.type = AST_LITERAL_NULL;
                 break;
 
             case CborByteStringType:
+                ESP_LOGD(TAG, "Literal Byte string");
                 node->value.type = AST_LITERAL_NULL;
-                err = cbor_value_calculate_string_length(&nodeIter, &node->value.bytes.sz);
+                err = cbor_value_calculate_string_length(val, &node->value.bytes.sz);
                 if (err != CborNoError) {
                     return err;
                 }
@@ -394,7 +357,7 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node) {
                     return CborErrorOutOfMemory;
                 }
 
-                err = cbor_value_copy_byte_string(&nodeIter, node->value.bytes.data, &node->value.bytes.sz, NULL); 
+                err = cbor_value_copy_byte_string(val, node->value.bytes.data, &node->value.bytes.sz, NULL); 
                 if (err != CborNoError) {
                     free(node->value.bytes.data);
                     return err;
@@ -404,9 +367,19 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node) {
             // case CborUndefinedType:
             // case CborTextStringType:
             default:
+                ESP_LOGW(TAG, "Unknown tag type %llu", ui);
                 // All other types are invalid.
                 return CborErrorImproperValue;
         }
+
+        // Now advance the pointer past the value we just read.
+        err = cbor_value_advance(val);
+        if (err != CborNoError) {
+            ESP_LOGW(TAG, "Error advancing: %d", err);
+            free(node->children);
+            return err;
+        }
+
     }
 
     return CborNoError;

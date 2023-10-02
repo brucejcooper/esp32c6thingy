@@ -4,7 +4,7 @@
 #include "ccpeed_err.h"
 #include "device.h"
 #include "provider.h"
-#include "aspect_button.h"
+#include "interface_pushbutton.h"
 #include <driver/gpio.h>
 #include "freertos/FreeRTOS.h"
 #include <freertos/task.h>
@@ -13,7 +13,7 @@
 #include "esp_timer.h"
 
 static int gpio_input_aspects[] = {
-    ASPECT_BUTTON_ID
+    THINGIF_PUSHBUTTON
 };
 
 static TaskHandle_t button_action_handler_task = NULL;
@@ -30,6 +30,9 @@ const static char *TAG = "buttons";
 // How long between press and release to count as a click.
 // By default this is anything up to the LONG_PRESS timeout.
 #define CLICK_THRESHOLD_TICKS pdMS_TO_TICKS(LONGPRESS_USEC/1000)
+
+
+
 
 
 
@@ -90,6 +93,8 @@ static void gpio_input_device_set_state(gpio_input_device_t *self, button_state_
     }
 
 }
+
+
 
 static void gpio_isr(void *arg) {
     gpio_input_provider_t *prov = (gpio_input_provider_t *) arg;
@@ -212,8 +217,101 @@ void button_action_handler(void *args) {
 }
 
 
+ccpeed_err_t gpio_device_set_attr(struct device_t *gendev, int iface_id, CborValue *val) {
+    gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
+    ccpeed_err_t err;
+    thingif_pushbutton_attr_t newAttr = THINGIF_PUSHBUTTON_ATTR_INIT;
+
+    switch (iface_id) {
+        case THINGIF_PUSHBUTTON:
+            err = thingif_pushbutton_attr_read(&newAttr, val);
+            if (err != CCPEED_NO_ERR) {
+                return err;
+            }
+
+            if (newAttr.is_click_max_duration_present && newAttr.click_max_duration != dev->attr.click_max_duration) {
+                dev->attr.click_max_duration = newAttr.click_max_duration;
+                dev->attr.is_click_max_duration_present = true;
+            }
+
+            if (newAttr.is_longclick_delay_present && newAttr.longclick_delay != dev->attr.longclick_delay) {
+                dev->attr.longclick_delay = newAttr.longclick_delay;
+                dev->attr.is_longclick_delay_present = true;
+            }
+
+            if (newAttr.is_longclick_repeat_delay_present && newAttr.longclick_repeat_delay != dev->attr.longclick_repeat_delay) {
+                dev->attr.longclick_repeat_delay = newAttr.longclick_repeat_delay;
+                dev->attr.is_longclick_repeat_delay_present = true;
+            }
+
+            if (newAttr.is_on_press_present) {
+                if (dev->attr.is_on_click_present) {
+                    ast_free(&(dev->attr.on_press));
+                }
+                dev->attr.is_on_press_present = true;
+                dev->attr.on_press = newAttr.on_press;
+            }
+
+            if (newAttr.is_on_release_present) {
+                if (dev->attr.is_on_release_present) {
+                    ast_free(&(dev->attr.on_release));
+                }
+                dev->attr.is_on_release_present = true;
+                dev->attr.on_release = newAttr.on_release;
+            }
+
+            if (newAttr.is_on_click_present) {
+                if (dev->attr.is_on_click_present) {
+                    ast_free(&(dev->attr.on_click));
+                }
+                dev->attr.is_on_click_present = true;
+                dev->attr.on_click = newAttr.on_click;
+            }
+
+            if (newAttr.is_on_long_press_present) {
+                if (dev->attr.is_on_long_press_present) {
+                    ast_free(&(dev->attr.on_long_press));
+                }
+                dev->attr.is_on_long_press_present = true;
+                dev->attr.on_long_press = newAttr.on_long_press;
+            }
+
+            break;
+        default:
+            return CCPEED_ERROR_INVALID;
+    }
+    return CCPEED_NO_ERR;
+
+}
+
+ccpeed_err_t gpio_device_process_service_call(struct device_t *gendev, int iface_id, int serviceId, CborValue *params, size_t numParams) {
+    gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
+    // pushbutton has no services. 
+    return CCPEED_ERROR_INVALID;
+}
+
+ccpeed_err_t gpio_device_encode_attributes(struct device_t *gendev, int iface_id, CborEncoder *encoder) {
+    gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
+    ccpeed_err_t err;
+    thingif_pushbutton_attr_t newAttr = THINGIF_PUSHBUTTON_ATTR_INIT;
+
+    switch (iface_id) {
+        case THINGIF_PUSHBUTTON:
+            err = thingif_pushbutton_attr_write(&newAttr, encoder);
+            if (err != CCPEED_NO_ERR) {
+                return err;
+            }
+            break;
+        default:
+            return CCPEED_ERROR_INVALID;
+    }
+    return CCPEED_NO_ERR;
+}
+
+
+
 void gpio_input_provider_init(gpio_input_provider_t *self, uint8_t *mac, uint32_t pin) {
-    provider_init(&self->super, GPIO_INPUT_PROVIDER_ID);
+    provider_init(&self->super, GPIO_INPUT_PROVIDER_ID, gpio_device_encode_attributes, gpio_device_set_attr, gpio_device_process_service_call);
     self->pin = pin;
 
     gpio_config_t gpioConfig = {

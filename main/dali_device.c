@@ -9,12 +9,12 @@
 #include "freertos/event_groups.h"
 #include "provider.h"
 #include "device.h"
-#include "aspect_on_off.h"
-#include "aspect_brightness.h"
+#include "interface_switch.h"
+#include "interface_brightness.h"
 #include <string.h>
 
 #include "esp_log.h"
-#include "aspect_on_off.h"
+#include "interface_switch.h"
 #include "linked_list.h"
 #include "dali_device.h"
 #include "dali_provider.h"
@@ -28,17 +28,17 @@
 
 void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_identifier_t *serial, uint16_t addr, uint8_t lightType, uint8_t level, uint8_t min_level, uint8_t max_level, uint8_t power_on_level, uint16_t group_membership) {
     int aspects[2] = {
-        ASPECT_ON_OFF_ID,
-        ASPECT_BRIGHTNESS_ID
+        THINGIF_SWITCH,
+        THINGIF_BRIGHTNESS
     };    
     device_init(&self->super, &prov->super, serial, aspects, min_level != max_level ? 2 : 1);
 
     self->address = addr;
     self->lightType = lightType;
-    self->level = level;
-    self->min_level = min_level;
-    self->max_level = max_level;
-    self->power_on_level = power_on_level;
+    self->brightness_attr.level = level;
+    self->brightness_attr.min_level = min_level;
+    self->brightness_attr.max_level = max_level;
+    self->brightness_attr.power_on_level = power_on_level;
     self->group_membership = group_membership;
 }
 
@@ -112,21 +112,21 @@ ccpeed_err_t dali_device_update_all_attr(dali_device_t *device) {
         ESP_LOGW(TAG, "Didn't get response from querying Level of device %d", DALI_ID_FROM_ADDR(device->address));
         return CCPEED_ERROR_BUS_ERROR;
     }
-    device->level = res;
+    device->brightness_attr.level = res;
 
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_MIN_LEVEL, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
     }
-    device->min_level = res;
+    device->brightness_attr.min_level = res;
     
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_MAX_LEVEL, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
     }
-    device->max_level = res;
+    device->brightness_attr.max_level = res;
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_POWER_ON_LEVEL, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
     }
-    device->power_on_level = res;
+    device->brightness_attr.power_on_level = res;
 
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_GROUPS_ZERO_TO_SEVEN, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
@@ -137,9 +137,9 @@ ccpeed_err_t dali_device_update_all_attr(dali_device_t *device) {
     }
     device->group_membership |= res << 8;
 
-    device->super.aspects[0] = ASPECT_ON_OFF_ID;
-    device->super.aspects[1] = ASPECT_BRIGHTNESS_ID;
-    device->super.num_aspects = device->min_level != device->max_level ? 2 : 1;
+    device->super.aspects[0] = THINGIF_SWITCH;
+    device->super.aspects[1] = THINGIF_BRIGHTNESS;
+    device->super.num_aspects = device->brightness_attr.min_level != device->brightness_attr.max_level ? 2 : 1;
 
     return CCPEED_NO_ERR;
 }
@@ -169,30 +169,16 @@ ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, d
 
 ccpeed_err_t dali_device_encode_attributes(device_t *self, int aspect_id, CborEncoder *encoder) {
     dali_device_t *dev = (dali_device_t *) self;
-    CborEncoder attributeEncoder;
     char buf[60];
 
     ESP_LOGI(TAG, "Encoding attributes for device %s, aspect %d", device_identifier_to_str(&dev->super.id, buf, sizeof(buf)), aspect_id);
     switch (aspect_id) {
-        case ASPECT_ON_OFF_ID:
-            cbor_encoder_create_map(encoder, &attributeEncoder, 1);
-            cbor_encode_uint(&attributeEncoder, ASPECT_ON_OFF_ATTR_IS_ON_ID);
-            cbor_encode_boolean(&attributeEncoder, dev->level != 0);
-            cbor_encoder_close_container(encoder, &attributeEncoder);
+        case THINGIF_SWITCH:
+            thingif_switch_attr_write(&dev->switch_attr, encoder);
 
             break;
-        case ASPECT_BRIGHTNESS_ID:
-            cbor_encoder_create_map(encoder, &attributeEncoder, 3);
-            cbor_encode_uint(&attributeEncoder, ASPECT_BRIGHTNESS_ATTR_LEVEL_ID);
-            cbor_encode_uint(&attributeEncoder, dev->level);
-
-            cbor_encode_uint(&attributeEncoder, ASPECT_BRIGHTNESS_ATTR_MIN_LEVEL_ID);
-            cbor_encode_uint(&attributeEncoder, dev->min_level);
-
-            cbor_encode_uint(&attributeEncoder, ASPECT_BRIGHTNESS_ATTR_MAX_LEVEL_ID);
-            cbor_encode_uint(&attributeEncoder, dev->max_level);
-
-            cbor_encoder_close_container(encoder, &attributeEncoder);
+        case THINGIF_BRIGHTNESS:
+            thingif_brightness_attr_write(&dev->brightness_attr, encoder);
             break;
     }
     return CCPEED_NO_ERR;
@@ -216,7 +202,10 @@ static ccpeed_err_t dali_device_fetch_level(dali_device_t *self) {
     int res = dali_send_command((dali_provider_t *)self->super.provider, self-> address | DALI_CMD_QUERY_ACTUAL_LEVEL, pdMS_TO_TICKS(200));
     if (res >= 0) {
         ESP_LOGI(TAG, "Device %s level is now %d", device_identifier_to_str(&self->super.id, buf, sizeof(buf)), res);
-        self->level = res;
+        self->brightness_attr.level = res;
+        self->brightness_attr.is_level_present = true;
+        self->switch_attr.on = res != 0;
+        self->switch_attr.is_on_present = true;
         // TODO notify listeners of new level
         return CCPEED_NO_ERR;
     } else {
@@ -246,12 +235,7 @@ static ccpeed_err_t dali_device_wait_for_fade(dali_device_t *self) {
         }
     } while (fade_running);
     return CCPEED_NO_ERR;
-
 }
-
-
-
-
 
 
 static ccpeed_err_t dali_device_send_command(dali_device_t *device, uint16_t cmd) {
@@ -271,48 +255,26 @@ static ccpeed_err_t dali_send_dapc_command(dali_device_t *device, uint8_t level)
         return CCPEED_ERROR_INVALID;
     }
     return dali_send_command(DALI_DEVICE_GET_PROVIDER(device), device->address | level, CMD_WAIT_TIMEOUT);
-
-
 }
 
 
-
-
-
-static ccpeed_err_t dali_device_set_numeric_config(dali_device_t *dev, const char *attrName, uint16_t cmd, CborValue *val, uint8_t *out) {
+static ccpeed_err_t dali_device_set_numeric_config(dali_device_t *dev, uint16_t cmd, uint8_t val) {
     char buf[60];
-    uint32_t ival;
     ccpeed_err_t cerr;
 
-    if (cbor_expect_uint32(val, 254, &ival) != CborNoError) {
-        ESP_LOGW(TAG, "attribute %s only accepts unsigned integers", attrName);
-        return CCPEED_ERROR_INVALID;
-    }
-    if (dali_set_dtr(DALI_DEVICE_GET_PROVIDER(dev), 0, ival) != CCPEED_NO_ERR) {
+    if (dali_set_dtr(DALI_DEVICE_GET_PROVIDER(dev), 0, val) != CCPEED_NO_ERR) {
         return CCPEED_ERROR_BUS_ERROR;
     }
-
-    switch (cmd) {
-        case 0:
-            cerr = dali_send_dapc_command(dev, ival);
-            if (cerr != CCPEED_NO_ERR) {
-                return cerr;
-            }
-            break;
-        default:
-            cerr = dali_device_send_command(dev, cmd);
-            if (cerr != CCPEED_NO_ERR) {
-                return cerr;
-            }
-            // Configuration commands must be sent twice. 
-            cerr = dali_device_send_command(dev, cmd);
-            if (cerr != CCPEED_NO_ERR) {
-                return cerr;
-            }
-            break;
+    cerr = dali_device_send_command(dev, cmd);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
     }
-    *out = ival;
-    ESP_LOGI(TAG, "device %s.%s set to %d", device_identifier_to_str(&dev->super.id, buf, sizeof(buf)), attrName, dev->max_level);
+    // Configuration commands must be sent twice. 
+    cerr = dali_device_send_command(dev, cmd);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+    ESP_LOGI(TAG, "device %s.%d set to %d", device_identifier_to_str(&dev->super.id, buf, sizeof(buf)), cmd, val);
     return CCPEED_NO_ERR;
 }
 
@@ -320,59 +282,76 @@ static ccpeed_err_t dali_device_set_is_on(dali_device_t *self, bool val) {
     char buf[60];
     ccpeed_err_t cerr;
 
-    if (val) {
-        cerr = dali_device_send_command(self, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL);
-        if (cerr != CCPEED_NO_ERR) {
-            return cerr;
-        }
-    } else {
-        cerr = dali_device_send_command(self, DALI_CMD_OFF);
-        if (cerr != CCPEED_NO_ERR) {
-            return cerr;
-        }
+    cerr = dali_device_send_command(self, val ? DALI_CMD_GOTO_LAST_ACTIVE_LEVEL : DALI_CMD_OFF);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
     }
+    self->switch_attr.is_on_present = true;
+    self->switch_attr.on = val;
     ESP_LOGI(TAG, "device %s is_on set to %s", device_identifier_to_str(&self->super.id, buf, sizeof(buf)), val ? "true" : "false");
     return dali_device_wait_for_fade(self) || dali_device_fetch_level(self);
 }
 
-ccpeed_err_t dali_device_set_attr(device_t *self, int aspect_id, int attr_id, CborValue *val) {
+ccpeed_err_t dali_device_set_attr(device_t *self, int aspect_id, CborValue *val) {
     dali_device_t *dev = (dali_device_t *) self;
-    CborError err;
-    
+    ccpeed_err_t cerr;
+    thingif_switch_attr_t swattr;
+    thingif_brightness_attr_t brattr;
+    bool load_level_after_set = false;
+
     switch (aspect_id) {
-        case ASPECT_ON_OFF_ID:
-            switch (attr_id) {
-                case ASPECT_ON_OFF_ATTR_IS_ON_ID:
-                    if (!cbor_value_is_boolean(val)) {
-                        ESP_LOGW(TAG, "Light attribute IS_ON only accepts booleans");
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    bool is_on;
-                    err = cbor_value_get_boolean(val, &is_on);
-                    if (err != CborNoError) {
-                        return CCPEED_ERROR_INVALID;
-                    }
-                    return dali_device_set_is_on(dev, is_on);
-                default:
-                    return CCPEED_ERROR_NOT_FOUND;
+        case THINGIF_SWITCH:
+            cerr = thingif_switch_attr_read(&swattr, val);
+            if (cerr != CCPEED_NO_ERR) {
+                return cerr;
+            }
+            if (swattr.is_on_present) {
+                dali_device_set_is_on(dev, swattr.on);
             }
             break;
-        case ASPECT_BRIGHTNESS_ID:
-            switch (attr_id) {
-                case ASPECT_BRIGHTNESS_ATTR_LEVEL_ID:
-                    return dali_device_set_numeric_config(dev, "level", 0, val, &dev->level);
-                case ASPECT_BRIGHTNESS_ATTR_MIN_LEVEL_ID:
-                    return dali_device_set_numeric_config(dev, "min_level", DALI_CMD_SET_MIN_LEVEL, val, &dev->min_level);
-                case ASPECT_BRIGHTNESS_ATTR_MAX_LEVEL_ID:
-                    return dali_device_set_numeric_config(dev, "max_level", DALI_CMD_SET_MAX_LEVEL, val, &dev->max_level);
-                case ASPECT_BRIGHTNESS_ATTR_POWER_ON_LEVEL_ID:
-                    return dali_device_set_numeric_config(dev, "power_on_level", DALI_CMD_SET_POWER_ON_LEVEL, val, &dev->power_on_level);
-                default:
-                    return CCPEED_ERROR_NOT_FOUND;
+        case THINGIF_BRIGHTNESS:
+            cerr = thingif_brightness_attr_read(&brattr, val);
+            if (cerr != CCPEED_NO_ERR) {
+                return cerr;
+            }
+
+            if (brattr.is_level_present) {
+                dali_send_dapc_command(dev, brattr.level);
+                load_level_after_set = true;
+            }
+
+            if (brattr.is_max_level_present) {
+                dali_device_set_numeric_config(dev, DALI_CMD_SET_MAX_LEVEL, brattr.max_level);
+                dev->brightness_attr.is_max_level_present = true;
+                dev->brightness_attr.max_level = brattr.max_level;
+                load_level_after_set = true; // Because moving the limits might move the brightness
+            }
+
+            if (brattr.is_min_level_present) {
+                dali_device_set_numeric_config(dev, DALI_CMD_SET_MIN_LEVEL, brattr.min_level);
+                dev->brightness_attr.is_min_level_present = true;
+                dev->brightness_attr.min_level = brattr.min_level;
+                load_level_after_set = true; // Because moving the limits might move the brightness
+            }
+
+            if (brattr.is_power_on_level_present) {
+                dali_device_set_numeric_config(dev, DALI_CMD_SET_POWER_ON_LEVEL, brattr.power_on_level);
+                dev->brightness_attr.is_power_on_level_present = true;
+                dev->brightness_attr.power_on_level = brattr.power_on_level;
             }
             break;
         default:
             return CCPEED_ERROR_NOT_FOUND;
+    }
+    if (load_level_after_set) {
+        cerr = dali_device_wait_for_fade(dev);
+        if (cerr != CCPEED_NO_ERR) {
+            return cerr;
+        }
+        cerr = dali_device_fetch_level(dev);
+        if (cerr != CCPEED_NO_ERR) {
+            return cerr;
+        }
     }
     return CCPEED_NO_ERR;
 }
@@ -386,21 +365,21 @@ ccpeed_err_t dali_device_process_service_call(device_t *self, int aspectId, int 
     ccpeed_err_t cerr;
 
     switch (aspectId) {
-        case ASPECT_ON_OFF_ID:
+        case THINGIF_SWITCH:
             switch (serviceId) {
-                case ASPECT_ON_OFF_SERVICE_TOGGLE_ID:
+                case THINGIF_SWITCH_OP_TOGGLE_ON:
                     if (numParams != 0) {
                         ESP_LOGW(TAG, "Toggle has no parameters");
                         return CCPEED_ERROR_INVALID;
                     }
                     ESP_LOGI(TAG, "Device %s toggling is_on", device_identifier_to_str(&device->super.id, buf, sizeof(buf)));
-                    if (device->level) {
+                    if (device->brightness_attr.level) {
                         cerr = dali_device_send_command(device, DALI_CMD_OFF);
                         if (cerr != CCPEED_NO_ERR) {
                             return cerr;
                         }
 
-                        device->level = 0;
+                        device->brightness_attr.level = 0;
                     } else {
                         cerr = dali_device_send_command(device, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL);
                         if (cerr != CCPEED_NO_ERR) {
@@ -417,9 +396,9 @@ ccpeed_err_t dali_device_process_service_call(device_t *self, int aspectId, int 
                     return CCPEED_ERROR_NOT_FOUND;
             }
             break;
-        case ASPECT_BRIGHTNESS_ID:
+        case THINGIF_BRIGHTNESS:
             switch (serviceId) {
-                case ASPECT_BRIGHTNESS_SERVICE_DELTA_ID:
+                case THINGIF_BRIGHTNESS_OP_DELTA:
                     if (numParams != 1) {
                         ESP_LOGW(TAG, "apply_brightness_delta takes exactly one argument");
                         return CCPEED_ERROR_INVALID;
@@ -443,7 +422,7 @@ ccpeed_err_t dali_device_process_service_call(device_t *self, int aspectId, int 
                     ESP_LOGI(TAG, "Applying delta of %d", delta);
 
                     // Parameters parsed successfully.  Proceed to make the change. 
-                    if (!device->level) {
+                    if (!device->brightness_attr.level) {
                         cerr = dali_device_send_command(device, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL);
                         if (cerr != CCPEED_NO_ERR) {
                             return cerr;

@@ -1,0 +1,51 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <cbor.h>
+#include "ast.h"
+#include "ccpeed_err.h"
+
+#define THINGIF_{{name|upper}} {{index}}
+
+{% for attr in attributes %}
+#define THINGIF_{{name|upper}}_ATTR_{{attr.name|upper}} {{loop.index}}
+{% endfor %}
+
+
+{% for op in operations %}
+#define THINGIF_{{name|upper}}_OP_{{op.name|upper}} {{loop.index}}
+{% endfor %}
+
+
+typedef struct {
+{% for attr in attributes %}
+    bool is_{{attr.name}}_present;
+    {% if attr.type == 'ast' -%}
+        ast_node_t
+    {%- elif attr.type == 'boolean' -%}
+        bool
+    {%- elif attr.type == 'string' -%}
+        char *
+    {%- else -%}
+        int
+    {%- endif %} {{attr.name}};
+{% endfor %}
+
+} thingif_{{name}}_attr_t;
+
+
+#define THINGIF_{{name|upper}}_ATTR_INIT { \
+{%- for attr in attributes %}
+    .is_{{attr.name}}_present = false, \
+    {%- if attr.type == 'string' %}
+    .{{attr.name}} = NULL, \
+    {%- endif -%}
+{%- endfor %}
+} 
+
+
+ccpeed_err_t thingif_{{name}}_attr_read(thingif_{{name}}_attr_t *attr, CborValue *val);
+ccpeed_err_t thingif_{{name}}_attr_write(thingif_{{name}}_attr_t *attr, CborEncoder *enc);
+void thingif_{{name}}_attr_free(thingif_{{name}}_attr_t *attr);
+ccpeed_err_t thingif_{{name}}_op_call(uint32_t op, CborValue *params);

@@ -12,7 +12,11 @@ We support multip device types.  This is handled with sdkconfig files, one for e
 
 For example, to build the dali-brdige variant, run
 ```sh
-SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.dalibridge' IDF_TARGET=esp32c6 idf.py -B build.dalibridge build
+IDF_TARGET=esp32c6 SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.dalibridge' IDF_TARGET=esp32c6 idf.py -B build.dalibridge build
+```
+or the button variant
+```sh
+IDF_TARGET=esp32c6 SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.button' idf.py -B build.button -p /dev/ttyUSB0 build
 ```
 
 Then when flashing

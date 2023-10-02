@@ -1,0 +1,86 @@
+[
+    {
+        "name": "device",
+        "id": 0,
+        "attributes": [
+            { "name": "fw_ver", "type": "string", "access": "readonly"}
+        ],
+        "operations": [
+            { "name": "upgrade_fw", "params": [{ "name": "url", "type": "string"}] }
+        ]
+    }, {
+        "name": "switch",
+        "attributes": [
+            { "name": "on", "type": "boolean"},
+            { "name": "on_change", "type": "ast", "detail": [ 
+                { "name": "on", "type": "boolean" } 
+            ]}
+        ],
+        "operations": [
+            { "name": "toggle_on", "params": []}
+        ]
+    }, {
+        "name": "brightness",
+        "attributes": [
+            { "name": "level", "type": "integer", "min": 0, "max": 255 },
+            { "name": "min_level", "type": "integer", "min": 0, "max": 255 },
+            { "name": "max_level", "type": "integer", "min": 0, "max": 255 },
+            { "name": "power_on_level", "type": "integer", "min": 0, "max": 255 }
+        ],
+        "operations": [
+            { "name": "delta", "params": [{ "name": "amount", "type": "integer"}]},
+            { "name": "recall_max_level", "params": []}
+        ]
+    }, {
+        "name": "pushbutton",
+        "attributes": [
+            { "name": "click_max_duration", "type": "integer", "min": 0, "max": 10000 },
+            { "name": "longclick_delay", "type": "integer", "min": 0, "max": 10000 },
+            { "name": "longclick_repeat_delay", "type": "integer", "min": 0, "max": 10000 },
+            { "name": "on_press", "type": "ast", "detail": [ 
+                { "name": "clickCount", "type": "integer" } 
+            ]},
+            { "name": "on_release", "type": "ast", "detail": [ 
+                { "name": "clickCount", "type": "integer" } 
+            ]},
+            { "name": "on_click", "type": "ast", "detail": [ 
+                { "name": "clickCount", "type": "integer" } 
+            ]},
+            { "name": "on_long_press", "type": "ast", "detail": [ 
+                { "name": "clickCount", "type": "integer" }, 
+                { "name": "repeatCount", "type": "integer"}
+            ]}
+        ],
+        "operations": []
+    }, {
+
+        "name": "temperature",
+        "attributes": [
+            { "name": "value", "type": "float" },
+            { "name": "poll_frequency", "type": "integer", "min": 1 },
+            { "name": "on_change", "type": "ast", "detail": [
+                { "name": "value", "type": "float" },
+                { "name": "old_value", "type": "float" },
+                { "name": "seconds_delta", "type": "integer" }
+            ]},
+            { "name": "alarm_high_tripped", "type": "boolean" },
+            { "name": "alarm_low_tripped", "type": "boolean" },
+            { "name": "alarm_low", "type": "float" },
+            { "name": "alarm_high", "type": "float" },
+            { "name": "on_alarm_high_tripped", "type": "ast", "detail": []},
+            { "name": "on_alarm_low_tripped", "type": "ast", "detail": []},
+            { "name": "on_alarm_high_cleared", "type": "ast", "detail": []},
+            { "name": "on_alarm_low_cleared", "type": "ast", "detail": []}
+        ],
+        "operations": []
+    }, {
+        "name": "hvac",
+        "attributes": [
+            { "name": "target_temperature", "type": "float" },
+            { "name": "source_sensors", "type": "array",  "itemtype": "deviceid" },
+            { "name": "mode", "type": "enum", "values": ["off", "heat", "cool", "auto"] }
+
+        ],
+        "operations": []
+    }
+]

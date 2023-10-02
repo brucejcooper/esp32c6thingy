@@ -32,8 +32,8 @@
 #include "gpio_input_provider.h"
 #include "dali_device.h"
 #include "provider.h"
-#include "aspect_on_off.h"
-#include "aspect_brightness.h"
+#include "interface_switch.h"
+#include "interface_brightness.h"
 
 
 #include <driver/uart.h>
@@ -57,31 +57,9 @@
 #include <openthread/coap.h>
 #include "openthread/tasklet.h"
 #include "esp_vfs_eventfd.h"
+#include "ast.h"
 
 #include "device.h"
-
-
-typedef enum { 
-    DEVICE_ASPECT_TYPE_LIGHT = 1, 
-    DEVICE_ASPECT_TYPE_PUSH_BUTTON = 2, 
-    DEVICE_ASPECT_TYPE_THERMOSTAT = 3, 
-    DEVICE_ASPECT_TYPE_TEMPERATURE_HUMIDITY_SENSOR = 4, 
-    DEVICE_ASPECT_TYPE_PROTOCOL_BRIDGE = 5, 
-} device_aspect_type_t;
-
-typedef struct {
-    device_identifier_t target;
-    device_aspect_type_t aspect;
-    uint32_t serviceId;
-    uint8_t *arguments; // CBOR encoded array, or NULL for none.
-} device_action_t;
-
-typedef enum {
-    PUSH_BUTTON_EVENT_PRESS = 1,
-    PUSH_BUTTON_EVENT_RELEASE = 2,
-    PUSH_BUTTON_EVENT_LONG_PRESS = 3,
-    PUSH_BUTTON_EVENT_LONG_PRESS_REPEAT = 4,
-} push_button_eventid_t;
 
 
 static uint8_t defaultMac[8];
@@ -119,6 +97,35 @@ static otCoapResource testResource = {
     .mNext = NULL,
     .mUriPath = "d"
 };
+
+
+static const uint8_t exampleCborRepresentation[] = {
+    0x84, AST_TYPE_CONDITIONAL,
+        0x83, AST_TYPE_EQUALS,
+            0x83, AST_TYPE_INDEX,
+                0x82, AST_TYPE_PARAM, 0x00,
+                0x00,
+            0x00,
+        0x84, AST_TYPE_ARRAY, // Truthy action - Create a literal array with 3 elements.
+            0x85, AST_TYPE_ARRAY,
+                DEVID_TYPE_GTIN,
+                0x46, 0x08, 0x30, 0xEB, 0xFE, 0x32, 0x0B,
+                DEVID_TYPE_SERIAL_NUMBER,
+                0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x0F, 0xB5,  // byte string
+            THINGIF_SWITCH,
+            THINGIF_SWITCH_OP_TOGGLE_ON, 
+        0x84, AST_TYPE_ARRAY, // Falsy action 
+            0x85, AST_TYPE_ARRAY,
+                DEVID_TYPE_GTIN,
+                0x46, 0x08, 0x30, 0xEB, 0xFE, 0x32, 0x0B,
+                DEVID_TYPE_SERIAL_NUMBER,
+                0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x0F, 0xB5,  // byte string
+            THINGIF_BRIGHTNESS,
+            THINGIF_BRIGHTNESS_OP_RECALL_MAX_LEVEL,    
+};
+
+
+
 
 
 static esp_netif_t *init_openthread_netif(const esp_openthread_platform_config_t *config)
@@ -286,7 +293,7 @@ static otCoapCode process_attribute_udpate(device_t *device, int aspectId, uint8
 
     // Read in the body of the request
     CborParser parser;
-    CborValue val, mapIter;
+    CborValue val;
     CborError err = cbor_parser_init(buf, len, 0, &parser, &val);
     ccpeed_err_t cerr;
     len = 0;
@@ -294,57 +301,9 @@ static otCoapCode process_attribute_udpate(device_t *device, int aspectId, uint8
         ESP_LOGW(TAG, "Error creating parser %d", err);
         return OT_COAP_CODE_NOT_ACCEPTABLE;
     }
-    if (!cbor_value_is_map(&val)) {
-        ESP_LOGW(TAG, "Unknown type %d", val.type);
-        return OT_COAP_CODE_NOT_ACCEPTABLE;
-    }
-    size_t num_attrs;
-    err = cbor_value_get_map_length(&val, &num_attrs);
-    if (err != CborNoError) {                        
-        return OT_COAP_CODE_NOT_ACCEPTABLE;
-    }
-    err = cbor_value_enter_container(&val, &mapIter);
-    if (err != CborNoError) {                        
-        return OT_COAP_CODE_NOT_ACCEPTABLE;
-    }
-    ESP_LOGD(TAG, "There are %d attribtues to set", num_attrs);
-    for (int i = 0; i < num_attrs; i++) {
-        uint32_t label;
-        err = cbor_expect_uint32(&mapIter, UINT32_MAX, &label);
-        if (err != CborNoError) {                        
-            return OT_COAP_CODE_NOT_ACCEPTABLE;
-        }
-        err = cbor_value_advance(&mapIter);
-        if (err != CborNoError) {                        
-            return OT_COAP_CODE_NOT_ACCEPTABLE;
-        }
-
-
-        if (device->provider->set_attr_fn) {
-            cerr = device->provider->set_attr_fn(device, aspectId, label, &mapIter);
-        } else {            
-            ESP_LOGE(TAG, "Attempt to update parameter on an unknown device type");
-            return OT_COAP_CODE_NOT_IMPLEMENTED;
-        }
-        
-        switch (cerr) {
-            case CCPEED_NO_ERR:
-                break;
-            case CCPEED_ERROR_NOT_FOUND:
-                return OT_COAP_CODE_NOT_FOUND;
-            default:
-                return OT_COAP_CODE_INTERNAL_ERROR;
-        }
-        err = cbor_value_advance(&mapIter);
-        if (err != CborNoError) {                        
-            ESP_LOGW(TAG, "Got Error %d advancing", err);
-            return OT_COAP_CODE_NOT_ACCEPTABLE;
-        }
-
-    }
-    err = cbor_value_leave_container(&val, &mapIter);
-    if (err != CborNoError) {                        
-        return OT_COAP_CODE_NOT_ACCEPTABLE;
+    cerr = device->provider->set_attr_fn(device, aspectId, &val);
+    if (cerr != CCPEED_NO_ERR) {                        
+        return cerr;
     }
 
     return OT_COAP_CODE_CHANGED;
@@ -689,6 +648,19 @@ void app_main(void) {
 
     xTaskCreate(ot_task_worker, "ot_cli_main", 10240, xTaskGetCurrentTaskHandle(), 5, NULL);
     root_provider_init(&rootProvider);
+
+    ast_node_t expressionNode;
+    CborParser cbp;
+    CborValue value;
+    CborError err;
+
+    ESP_LOG_BUFFER_HEXDUMP(TAG, exampleCborRepresentation, sizeof(exampleCborRepresentation), ESP_LOG_INFO);
+    err = cbor_parser_init(exampleCborRepresentation, sizeof(exampleCborRepresentation), 0, &cbp, &value);
+    assert(err == CborNoError);
+    err = ast_parse_from_cbor(&value, &expressionNode);
+    if (err != CborNoError) {
+        ESP_LOGW(TAG, "Couldn't parse value");
+    }
 
 
 #if CONFIG_CCPEED_PROVIDER_DALI_ENABLE

@@ -10,5 +10,11 @@ idf_component_register(SRCS
                     "dali_device.c"
                     "gpio_input_provider.c"
                     "ast.c"
+                    "interface_brightness.c"
+                    "interface_device.c"
+                    "interface_hvac.c"
+                    "interface_pushbutton.c"
+                    "interface_switch.c"
+                    "interface_temperature.c"
                     INCLUDE_DIRS "."
                     EMBED_TXTFILES certs/coap_ca.pem certs/coap_server.crt certs/coap_server.key)

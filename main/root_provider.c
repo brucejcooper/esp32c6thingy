@@ -13,7 +13,7 @@
 
 
 ccpeed_err_t root_provider_init(root_provider_t *self) {
-    provider_init(&self->super, ROOT_PROVIDER_ID);
+    provider_init(&self->super, ROOT_PROVIDER_ID, NULL, NULL, NULL);
     self->super.set_attr_fn = NULL;
     self->super.process_service_call_fn = NULL;
     self->super.encode_attributes_fn = NULL;
