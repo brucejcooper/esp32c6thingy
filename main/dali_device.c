@@ -308,18 +308,91 @@ static ccpeed_err_t dali_device_set_is_on(dali_device_t *self, bool val) {
     if (cerr != CCPEED_NO_ERR) {
         return cerr;
     }
-    self->switch_attr.is_on_present = true;
-    self->switch_attr.on = val;
     ESP_LOGI(TAG, "device %s is_on set to %s", device_identifier_to_str(&self->super.id, buf, sizeof(buf)), val ? "true" : "false");
-    return dali_device_wait_for_fade(self) || dali_device_fetch_level(self);
+    return CCPEED_NO_ERR;
 }
+
+ccpeed_err_t dali_device_set_switch_attr(dali_device_t *dev, thingif_switch_attr_t *swattr) {
+    ccpeed_err_t cerr;
+
+    if (swattr->is_on_present) {
+        dali_device_set_is_on(dev, swattr->on);
+    }
+    cerr = dali_device_wait_for_fade(dev);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+    cerr = dali_device_fetch_level(dev);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+
+    thingif_switch_attr_copy(&dev->switch_attr, swattr);
+
+    // Each time, after we set attributes, check the current level afterwards.
+    cerr = dali_device_wait_for_fade(dev);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+    cerr = dali_device_fetch_level(dev);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+
+    return CCPEED_NO_ERR;
+}
+
+ccpeed_err_t dali_device_set_brightness_attr(dali_device_t *dev, thingif_brightness_attr_t *brattr) {
+    ccpeed_err_t cerr;
+
+    if (brattr->is_level_present) {
+        cerr = dali_send_dapc_command(dev, brattr->level);
+        if (cerr != CCPEED_NO_ERR) {
+            return cerr;
+        }
+    }
+
+    if (brattr->is_max_level_present) {
+        cerr = dali_device_set_numeric_config(dev, DALI_CMD_SET_MAX_LEVEL, brattr->max_level);
+        if (cerr != CCPEED_NO_ERR) {
+            return cerr;
+        }
+    }
+
+    if (brattr->is_min_level_present) {
+        cerr = dali_device_set_numeric_config(dev, DALI_CMD_SET_MIN_LEVEL, brattr->min_level);
+        if (cerr != CCPEED_NO_ERR) {
+            return cerr;
+        }
+    }
+
+    if (brattr->is_power_on_level_present) {
+        cerr = dali_device_set_numeric_config(dev, DALI_CMD_SET_POWER_ON_LEVEL, brattr->power_on_level);
+        if (cerr != CCPEED_NO_ERR) {
+            return cerr;
+        }
+    }
+    thingif_brightness_attr_copy(&dev->brightness_attr, brattr);
+
+    // Each time, after we set attributes, check the current level afterwards.
+    cerr = dali_device_wait_for_fade(dev);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+    cerr = dali_device_fetch_level(dev);
+    if (cerr != CCPEED_NO_ERR) {
+        return cerr;
+    }
+    return CCPEED_NO_ERR;
+}
+
+
 
 ccpeed_err_t dali_device_set_attr(device_t *self, int aspect_id, CborValue *val) {
     dali_device_t *dev = (dali_device_t *) self;
     ccpeed_err_t cerr;
     thingif_switch_attr_t swattr;
     thingif_brightness_attr_t brattr;
-    bool load_level_after_set = false;
 
     switch (aspect_id) {
         case THINGIF_SWITCH:
@@ -327,8 +400,9 @@ ccpeed_err_t dali_device_set_attr(device_t *self, int aspect_id, CborValue *val)
             if (cerr != CCPEED_NO_ERR) {
                 return cerr;
             }
-            if (swattr.is_on_present) {
-                dali_device_set_is_on(dev, swattr.on);
+            cerr = dali_device_set_switch_attr(dev, &swattr);
+            if (cerr != CCPEED_NO_ERR) {
+                return cerr;
             }
             break;
         case THINGIF_BRIGHTNESS:
@@ -336,45 +410,14 @@ ccpeed_err_t dali_device_set_attr(device_t *self, int aspect_id, CborValue *val)
             if (cerr != CCPEED_NO_ERR) {
                 return cerr;
             }
+            cerr = dali_device_set_brightness_attr(dev, &brattr);
 
-            if (brattr.is_level_present) {
-                dali_send_dapc_command(dev, brattr.level);
-                load_level_after_set = true;
-            }
-
-            if (brattr.is_max_level_present) {
-                dali_device_set_numeric_config(dev, DALI_CMD_SET_MAX_LEVEL, brattr.max_level);
-                dev->brightness_attr.is_max_level_present = true;
-                dev->brightness_attr.max_level = brattr.max_level;
-                load_level_after_set = true; // Because moving the limits might move the brightness
-            }
-
-            if (brattr.is_min_level_present) {
-                dali_device_set_numeric_config(dev, DALI_CMD_SET_MIN_LEVEL, brattr.min_level);
-                dev->brightness_attr.is_min_level_present = true;
-                dev->brightness_attr.min_level = brattr.min_level;
-                load_level_after_set = true; // Because moving the limits might move the brightness
-            }
-
-            if (brattr.is_power_on_level_present) {
-                dali_device_set_numeric_config(dev, DALI_CMD_SET_POWER_ON_LEVEL, brattr.power_on_level);
-                dev->brightness_attr.is_power_on_level_present = true;
-                dev->brightness_attr.power_on_level = brattr.power_on_level;
-            }
             break;
         default:
             return CCPEED_ERROR_NOT_FOUND;
     }
-    if (load_level_after_set) {
-        cerr = dali_device_wait_for_fade(dev);
-        if (cerr != CCPEED_NO_ERR) {
-            return cerr;
-        }
-        cerr = dali_device_fetch_level(dev);
-        if (cerr != CCPEED_NO_ERR) {
-            return cerr;
-        }
-    }
+
+
     return CCPEED_NO_ERR;
 }
 

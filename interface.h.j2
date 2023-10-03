@@ -49,3 +49,5 @@ ccpeed_err_t thingif_{{name}}_attr_read(thingif_{{name}}_attr_t *attr, CborValue
 ccpeed_err_t thingif_{{name}}_attr_write(thingif_{{name}}_attr_t *attr, CborEncoder *enc);
 void thingif_{{name}}_attr_free(thingif_{{name}}_attr_t *attr);
 ccpeed_err_t thingif_{{name}}_op_call(uint32_t op, CborValue *params);
+uint32_t thingif_{{name}}_attr_get_changed(thingif_{{name}}_attr_t *a, thingif_{{name}}_attr_t *b);
+void thingif_{{name}}_attr_copy(thingif_{{name}}_attr_t *dest, thingif_{{name}}_attr_t *src);

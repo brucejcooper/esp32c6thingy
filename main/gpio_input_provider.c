@@ -217,6 +217,7 @@ void button_action_handler(void *args) {
 }
 
 
+
 ccpeed_err_t gpio_device_set_attr(struct device_t *gendev, int iface_id, CborValue *val) {
     gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
     ccpeed_err_t err;
@@ -285,7 +286,7 @@ ccpeed_err_t gpio_device_set_attr(struct device_t *gendev, int iface_id, CborVal
 }
 
 ccpeed_err_t gpio_device_process_service_call(struct device_t *gendev, int iface_id, int serviceId, CborValue *params, size_t numParams) {
-    gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
+    // gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
     // pushbutton has no services. 
     return CCPEED_ERROR_INVALID;
 }
@@ -293,11 +294,10 @@ ccpeed_err_t gpio_device_process_service_call(struct device_t *gendev, int iface
 ccpeed_err_t gpio_device_encode_attributes(struct device_t *gendev, int iface_id, CborEncoder *encoder) {
     gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
     ccpeed_err_t err;
-    thingif_pushbutton_attr_t newAttr = THINGIF_PUSHBUTTON_ATTR_INIT;
 
     switch (iface_id) {
         case THINGIF_PUSHBUTTON:
-            err = thingif_pushbutton_attr_write(&newAttr, encoder);
+            err = thingif_pushbutton_attr_write(&dev->attr, encoder);
             if (err != CCPEED_NO_ERR) {
                 return err;
             }

@@ -1,11 +1,11 @@
 
 #include "interface_{{name}}.h"
-
+#include <string.h>
 
 
 ccpeed_err_t thingif_{{name}}_attr_read(thingif_{{name}}_attr_t *attr, CborValue *val) {
     CborValue it;
-    size_t len, slen;
+    size_t len;
     CborError err;
     uint64_t key;
 
@@ -51,21 +51,24 @@ ccpeed_err_t thingif_{{name}}_attr_read(thingif_{{name}}_attr_t *attr, CborValue
                     return CCPEED_ERROR_INVALID;
                 }
 {% elif attr.type == 'string' %}
-                if (!cbor_value_is_text_string(&it)) {
-                    return CCPEED_ERROR_INVALID;
-                }
-                err = cbor_value_get_string_length(&it, &slen);
-                if (err != CborNoError) {
-                    return CCPEED_ERROR_INVALID;
-                }
-                attr->{{attr.name}} = malloc(slen);
-                if (!attr->{{attr.name}}) {
-                    return CCPEED_ERROR_NOMEM;
-                }
+                { 
+                    size_t slen;
+                    if (!cbor_value_is_text_string(&it)) {
+                        return CCPEED_ERROR_INVALID;
+                    }
+                    err = cbor_value_get_string_length(&it, &slen);
+                    if (err != CborNoError) {
+                        return CCPEED_ERROR_INVALID;
+                    }
+                    attr->{{attr.name}} = malloc(slen);
+                    if (!attr->{{attr.name}}) {
+                        return CCPEED_ERROR_NOMEM;
+                    }
 
-                err = cbor_value_copy_text_string(&it, attr->{{attr.name}}, slen, NULL);
-                if (err != CborNoError) {
-                    return CCPEED_ERROR_INVALID;
+                    err = cbor_value_copy_text_string(&it, attr->{{attr.name}}, &slen, NULL);
+                    if (err != CborNoError) {
+                        return CCPEED_ERROR_INVALID;
+                    }
                 }
 {% else %}
                 if (!cbor_value_is_integer(&it)) {
@@ -166,4 +169,49 @@ void thingif_{{name}}_attr_free(thingif_{{name}}_attr_t *attr) {
 
 ccpeed_err_t thingif_{{name}}_op_call(uint32_t op, CborValue *params) {
     return CCPEED_ERROR_NOT_IMPLEMENTED;
+}
+
+
+
+uint32_t thingif_{{name}}_attr_get_changed(thingif_{{name}}_attr_t *original, thingif_{{name}}_attr_t *new_values) {
+    uint32_t delta = 0;
+    bool changed;
+
+{% for attr in attributes %}
+    if (new_values->is_{{attr.name}}_present) {
+{%- if attr.type == 'ast' %}
+        changed = !original->is_{{attr.name}}_present/* || ast_cmp(&original->{{attr.name}}, &new_values->{{attr.name}}) != 0*/; 
+{%- elif attr.type == 'string' %}
+        changed = !original->is_{{attr.name}}_present || strcmp(original->{{attr.name}}, new_values->{{attr.name}}) != 0; 
+{%- else %}
+        changed = !original->is_{{attr.name}}_present || original->{{attr.name}} != new_values->{{attr.name}}; 
+{%- endif %}
+        if (changed) {
+            delta |= (1 << THINGIF_{{name|upper}}_ATTR_{{attr.name|upper}});
+        }
+    }
+
+{% endfor %}
+    return delta;
+}
+
+void thingif_{{name}}_attr_copy(thingif_{{name}}_attr_t *target, thingif_{{name}}_attr_t *new_values) {
+{% for attr in attributes %}
+    if (new_values->is_{{attr.name}}_present) {
+{%- if attr.type == 'ast' %}
+        if (target->is_{{attr.name}}_present) {
+            ast_free(&target->{{attr.name}});
+        }
+        memcpy(&target->{{attr.name}}, &new_values->{{attr.name}}, sizeof(ast_node_t));        
+{%- elif attr.type == 'string' %}
+        if (target->is_{{attr.name}}_present && target->{{attr.name}} != NULL) {
+            free(target->{{attr.name}});
+        }
+        target->{{attr.name}} = strdup(new_values->{{attr.name}});
+{%- else %}
+        target->{{attr.name}} = new_values->{{attr.name}};        
+{%- endif %}
+        target->is_{{attr.name}}_present = true;
+    }
+{% endfor %}
 }

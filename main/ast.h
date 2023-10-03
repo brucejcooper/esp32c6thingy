@@ -63,6 +63,13 @@ typedef struct ast_node_t {
     size_t num_children;
 } ast_node_t;
 
+#define AST_NODE_INIT { \
+    .op = AST_TYPE_LITERAL, \
+    .value.type = AST_LITERAL_NULL, \
+    .children = NULL, \
+    .num_children = 0 \
+}
+
 
 typedef struct ast_stack_t {
     ast_literal_t *base;
