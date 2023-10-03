@@ -36,10 +36,17 @@ void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_identif
     self->address = addr;
     self->lightType = lightType;
     self->brightness_attr.level = level;
+    self->brightness_attr.is_level_present = true;
     self->brightness_attr.min_level = min_level;
+    self->brightness_attr.is_min_level_present = true;
     self->brightness_attr.max_level = max_level;
+    self->brightness_attr.is_max_level_present = true;
     self->brightness_attr.power_on_level = power_on_level;
+    self->brightness_attr.is_power_on_level_present = true;
     self->group_membership = group_membership;
+    self->switch_attr.is_on_change_present = false;
+    self->switch_attr.is_on_present = true;
+    self->switch_attr.on = level != 0;
 }
 
 
@@ -112,21 +119,27 @@ ccpeed_err_t dali_device_update_all_attr(dali_device_t *device) {
         ESP_LOGW(TAG, "Didn't get response from querying Level of device %d", DALI_ID_FROM_ADDR(device->address));
         return CCPEED_ERROR_BUS_ERROR;
     }
+    device->brightness_attr.is_level_present = true;
     device->brightness_attr.level = res;
+    device->switch_attr.is_on_present = true;
+    device->switch_attr.on = device->brightness_attr.min_level != 0;
 
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_MIN_LEVEL, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
     }
+    device->brightness_attr.is_min_level_present = true;
     device->brightness_attr.min_level = res;
     
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_MAX_LEVEL, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
     }
+    device->brightness_attr.is_max_level_present = true;
     device->brightness_attr.max_level = res;
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_POWER_ON_LEVEL, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
     }
     device->brightness_attr.power_on_level = res;
+    device->brightness_attr.is_power_on_level_present = true;
 
     if ((res = dali_send_command(provider, device->address | DALI_CMD_QUERY_GROUPS_ZERO_TO_SEVEN, CMD_WAIT_TIMEOUT)) < 0) {
         return CCPEED_ERROR_BUS_ERROR;
@@ -170,16 +183,25 @@ ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, d
 ccpeed_err_t dali_device_encode_attributes(device_t *self, int aspect_id, CborEncoder *encoder) {
     dali_device_t *dev = (dali_device_t *) self;
     char buf[60];
+    ccpeed_err_t err;
 
     ESP_LOGI(TAG, "Encoding attributes for device %s, aspect %d", device_identifier_to_str(&dev->super.id, buf, sizeof(buf)), aspect_id);
     switch (aspect_id) {
         case THINGIF_SWITCH:
-            thingif_switch_attr_write(&dev->switch_attr, encoder);
-
+            err = thingif_switch_attr_write(&dev->switch_attr, encoder);
+            if (err != CCPEED_NO_ERR) {
+                return err;
+            }
             break;
         case THINGIF_BRIGHTNESS:
-            thingif_brightness_attr_write(&dev->brightness_attr, encoder);
+            err = thingif_brightness_attr_write(&dev->brightness_attr, encoder);
+            if (err != CCPEED_NO_ERR) {
+                return err;
+            }
             break;
+
+        default:
+            return CCPEED_ERROR_INVALID;
     }
     return CCPEED_NO_ERR;
 

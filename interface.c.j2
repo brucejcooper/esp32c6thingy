@@ -114,6 +114,13 @@ ccpeed_err_t thingif_{{name}}_attr_write(thingif_{{name}}_attr_t *attr, CborEnco
 
 {% for attr in attributes %}
     if (attr->is_{{attr.name}}_present) {
+        // Encode the key id of the attribute
+        err = cbor_encode_int(&mapEnc, THINGIF_{{name|upper}}_ATTR_{{attr.name|upper}});
+        if (err != CborNoError) {
+            return CCPEED_ERROR_INVALID;
+        }
+
+        // Encode the value
 {%- if attr.type == 'ast' %}
         err = ast_serialise_to_cbor(&(attr->{{attr.name}}), &mapEnc);
         if (err != CborNoError) {
