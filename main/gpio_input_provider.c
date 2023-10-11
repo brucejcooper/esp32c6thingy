@@ -97,10 +97,8 @@ static void gpio_input_device_set_state(gpio_input_device_t *self, button_state_
 
 
 static void gpio_isr(void *arg) {
-    gpio_input_provider_t *prov = (gpio_input_provider_t *) arg;
-    gpio_input_device_t *device = &prov->device;
-
-    int level = gpio_get_level(prov->pin);
+    gpio_input_device_t *device = (gpio_input_device_t *) arg;
+    int level = gpio_get_level(device->pin);
     TickType_t ts = xTaskGetTickCountFromISR();
 
     switch (device->state) {
@@ -134,10 +132,9 @@ static void gpio_isr(void *arg) {
 
 static void timer_expired(void *args) {
     gpio_input_device_t *device = args;
-    gpio_input_provider_t *prov = (gpio_input_provider_t *) device->super.provider;
 
     TickType_t ts = xTaskGetTickCountFromISR();
-    int level = gpio_get_level(prov->pin);
+    int level = gpio_get_level(device->pin);
 
 
     switch (device->state) {
@@ -310,30 +307,36 @@ ccpeed_err_t gpio_device_encode_attributes(struct device_t *gendev, int iface_id
 
 
 
-void gpio_input_provider_init(gpio_input_provider_t *self, uint8_t *mac, uint32_t pin) {
+void gpio_input_provider_init(gpio_input_provider_t *self, uint8_t *mac, uint32_t *pins, size_t num_pins) {
+    ESP_LOGI(TAG, "Initialising input provider for %d pins", num_pins);
     provider_init(&self->super, GPIO_INPUT_PROVIDER_ID, gpio_device_encode_attributes, gpio_device_set_attr, gpio_device_process_service_call);
-    self->pin = pin;
+    esp_err_t err;
+
+    uint32_t mask = 0;
+    for (int i = 0; i < num_pins; i++) {
+        mask |= (1 << pins[i]);
+    }
 
     gpio_config_t gpioConfig = {
         .mode = GPIO_MODE_INPUT,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .intr_type = GPIO_INTR_ANYEDGE,
-        .pin_bit_mask = 1 << self->pin,
+        .pin_bit_mask = mask,
     };
-    if (button_action_handler_task == NULL) {
-        gpio_install_isr_service(0);
-    }
+    err = gpio_install_isr_service(0);
+    assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE);
     ESP_ERROR_CHECK(gpio_config(&gpioConfig));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(pin, gpio_isr, self));
 
-    gpio_input_device_init(&self->device, self, mac, pin);
-    add_device((device_t *) &self->device);
-
-    if (button_action_handler_task == NULL) {
-        button_action_queue = xQueueCreate(10, sizeof(button_event_t));
-        assert(xTaskCreate(button_action_handler, "gpio_input_handler", 2048, NULL, 5, &button_action_handler_task) == pdTRUE);
+    self->num_pins = num_pins;
+    for (int pin = 0; pin < num_pins; pin++) {
+        gpio_input_device_init(&self->devices[pin], self, mac, pins[pin]);
+        add_device(&self->devices[pin].super);
+        ESP_ERROR_CHECK(gpio_isr_handler_add(pins[pin], gpio_isr, &self->devices[pin]));
     }
+
+    button_action_queue = xQueueCreate(10, sizeof(button_event_t));
+    assert(xTaskCreate(button_action_handler, "gpio_input_handler", 2048, NULL, 5, &button_action_handler_task) == pdTRUE);
 }
 
 
@@ -349,6 +352,23 @@ void gpio_input_device_init(gpio_input_device_t *self, gpio_input_provider_t *pr
     id.parts[1].data[0] = pin;
 
     device_init(&self->super, &prov->super, &id, gpio_input_aspects, 1);
+    self->pin = pin;
+    self->attr.is_click_max_duration_present = true;
+    self->attr.click_max_duration = 750;
+    self->attr.is_longclick_delay_present = true;
+    self->attr.longclick_delay = 750;
+    self->attr.is_longclick_repeat_delay_present = true;
+    self->attr.longclick_repeat_delay = 250;
+    self->attr.is_on_click_present = true;
+    ast_set_null(&self->attr.on_click);
+    self->attr.is_on_long_press_present = true;
+    ast_set_null(&self->attr.on_long_press);
+    self->attr.is_on_press_present = true;
+    ast_set_null(&self->attr.on_press);
+    self->attr.is_on_release_present = true;
+    ast_set_null(&self->attr.on_release);
+
+    
     self->last_change = xTaskGetTickCount();
     self->last_press_tick = 0;
     self->last_release_tick = 0;

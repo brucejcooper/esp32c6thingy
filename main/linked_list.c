@@ -4,40 +4,46 @@
 
 void ll_init(linked_list_t *list) {
     list->head = NULL;
-    list->tail = NULL;
 }
 
 void ll_init_item(linked_list_item_t *item) {
     item->next = NULL;
-    item->prev = NULL;
 }
 
 
 void ll_append(linked_list_t *list, void *_item) {
     linked_list_item_t *item = (linked_list_item_t *) _item;
     item->next = NULL;
-    if (list->head) {
-        list->tail->next = item;
-        item->prev = list->tail;
+
+    linked_list_item_t *ptr = list->head;
+    if (ptr) {
+        while (ptr->next) {
+            ptr = ptr->next;
+        }
+        ptr->next = item;
     } else {
-        list->head = list->tail = item;
-        item->prev = NULL;
+        // There is no head, so the list is empty.
+        list->head = item;
     }
 }
 
 void ll_remove(linked_list_t *list, void *_item) {
     linked_list_item_t *item = (linked_list_item_t *) _item;
 
-    if (item->prev) {
-        item->prev->next = item->next;
+    if (list->head == item) {
+        // Its the head that we're removing
+        list->head = list->head->next;
+        item->next = NULL;
     } else {
-        // It was the first
-        list->head = item->next;
+        linked_list_item_t *prev = list->head;
+        while (prev && prev->next != item) {
+            prev = prev->next;
+        }
+        if (prev) {
+            prev->next = item->next;
+            item->next = NULL;
+        } else {
+            // Item not found!  Silently ignore it?
+        }
     }
-    if (item->next) {
-        item->next->prev = item->prev;
-    } else {
-        list->tail = item->prev;
-    }
-    item->next = item->prev = NULL;
 }

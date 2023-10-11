@@ -34,6 +34,7 @@
 #include "provider.h"
 #include "interface_switch.h"
 #include "interface_brightness.h"
+#include "subscriptions.h"
 
 
 #include <driver/uart.h>
@@ -382,7 +383,10 @@ static otCoapCode process_service_call(device_t *device, int aspectId, uint8_t *
 }
 
 
-
+// static const otMessageSettings msgSettings = {
+//     .mLinkSecurityEnabled = false,
+//     .mPriority = OT_MESSAGE_PRIORITY_NORMAL
+// };
 
 
 static void handle_coap_request(void *aContext, otMessage *request_message, const otMessageInfo *aMessageInfo) {
@@ -397,14 +401,24 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
     uint8_t *pathElem[3];
     size_t pathLen[3];
     CborEncoder encoder;
- 
+    uint64_t intOpt;
+    ccpeed_err_t err;
     device_identifier_t identifier;
     int numPath = 0;
+    otInstance *instance = esp_openthread_get_instance();
+    int32_t observeRequested = -1;
+    
+
+    // otMessage *noti = otCoapNewMessage(instance, &msgSettings);
+    // otCoapMessageSetCode(noti, OT_COAP_CODE_CONTENT);
 
     ESP_LOGD(TAG, "Handling request");
 
     otCoapOptionIteratorInit(&iter, request_message);
     requestCode = otCoapMessageGetCode(request_message);
+
+    uint8_t tokenSz = otCoapMessageGetTokenLength(request_message);
+    const uint8_t *token = otCoapMessageGetToken(request_message);
 
     const otCoapOption *opt = otCoapOptionIteratorGetFirstOption(&iter);
     while (opt) {
@@ -420,11 +434,18 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
                 assert(otCoapOptionIteratorGetOptionValue(&iter, bufPtr) == OT_ERROR_NONE);
                 ESP_LOGI(TAG, "Query %.*s", opt->mLength, bufPtr);
                 break;
+            case OT_COAP_OPTION_OBSERVE:
+                assert(otCoapOptionIteratorGetOptionUintValue(&iter, &intOpt) == OT_ERROR_NONE);
+                ESP_LOGI(TAG, "COAP Observe option set to %llu", intOpt);
+                observeRequested = intOpt;
+
+                break;
             default:
                 ESP_LOGI(TAG, "Ignoring option %d", opt->mNumber);
         }
         opt = otCoapOptionIteratorGetNextOption(&iter);
     }
+
 
     ESP_LOGD(TAG, "Number of path elements is %d", numPath);
     switch (numPath) {
@@ -436,23 +457,30 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
                 break;
             }
 
-    	    deviceid_decode(&identifier, pathElem[1], pathLen[1]);
+    	    err = deviceid_decode(&identifier, pathElem[1], pathLen[1]);
+            if (err != CCPEED_NO_ERR) {
+                ESP_LOGW(TAG, "Couldn't parse deviceID");
+                ESP_LOG_BUFFER_HEXDUMP(TAG, pathElem[1], pathLen[1], ESP_LOG_WARN);
+
+                responseCode = OT_COAP_CODE_NOT_ACCEPTABLE;
+                break;
+            }
 
             device_t *dev = device_find_by_id(&identifier);
             if (dev == NULL) {
-                ESP_LOGI(TAG, "Couldn't find device");
+                ESP_LOGW(TAG, "Couldn't find device %s", device_identifier_to_str(&identifier, (char *) buf, sizeof(buf)));
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
             if (pathLen[2] != 1) {
-                ESP_LOGI(TAG, "Extension too long");
+                ESP_LOGW(TAG, "Extension too long");
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
             int aspectId = pathElem[2][0];
 
             if (!device_has_aspect(dev, aspectId)) {
-                ESP_LOGI(TAG, "Device does not have aspect %d", aspectId);
+                ESP_LOGW(TAG, "Device does not have aspect %d", aspectId);
                 responseCode = OT_COAP_CODE_NOT_FOUND;
                 break;
             }
@@ -462,6 +490,33 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
             switch (requestCode) {
                 case OT_COAP_CODE_GET:
                     ESP_LOGD(TAG, "Request is GET");
+
+                    // Append the subscription, if requested.
+                    if (observeRequested != -1) {
+                        // See if there is an existing one. 
+                        ESP_LOGI(TAG, "Searching for existing subscription");
+                        subscription_t *sub = subscription_find(&identifier, aspectId, token, tokenSz, aMessageInfo);
+                        if (sub) {
+                            ESP_LOGI(TAG, "Removing existing subscription");
+                            err = subscription_delete(sub);
+                            if (err != CCPEED_NO_ERR) {
+                                responseCode = OT_COAP_CODE_INTERNAL_ERROR;
+                                break;
+                            }
+                        } else {
+                            ESP_LOGI(TAG, "No existing sub to remove");
+                        }
+                        if (observeRequested == 0) {
+                            ESP_LOGI(TAG, "Appending Subscription");
+                            err = subscription_append(&identifier, aspectId, token, tokenSz, aMessageInfo, 0);
+                            if (err != CCPEED_NO_ERR) {
+                                ESP_LOGW(TAG, "Error appending subscription: %d", err);
+                                responseCode = OT_COAP_CODE_INTERNAL_ERROR;
+                                break;
+                            }
+                        }
+                    }
+
                     // Encode all attributes as a CBOR map.
                     cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
                     if (dev->provider->encode_attributes_fn) {
@@ -492,23 +547,29 @@ static void handle_coap_request(void *aContext, otMessage *request_message, cons
             break;
     }
 
-    otInstance *instance = esp_openthread_get_instance();
     response = otCoapNewMessage(instance, NULL);
 	if (response == NULL) {
 		goto end;
 	}
-
 
   	error = otCoapMessageInitResponse(response, request_message, OT_COAP_TYPE_ACKNOWLEDGMENT, responseCode);
 	if (error != OT_ERROR_NONE) {
 		goto end;
 	}
 
+    if (observeRequested == 0 && requestCode == OT_COAP_CODE_GET && responseCode == OT_COAP_CODE_CONTENT) {
+        // Acknowledge the OBSERVE
+        otCoapMessageAppendObserveOption(response, observeRequested);
+    }
+
     if (len > 0) {
         error = otCoapMessageSetPayloadMarker(response);
         if (error != OT_ERROR_NONE) {
             goto end;
         }
+        ESP_LOGI(TAG, "output");
+        ESP_LOG_BUFFER_HEXDUMP(TAG, buf, len, ESP_LOG_INFO);
+
         error = otMessageAppend(response, buf, len);
         if (error != OT_ERROR_NONE) {
             goto end;
@@ -604,27 +665,7 @@ static root_provider_t rootProvider;
 #endif
 
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1 != -1
-    static gpio_input_provider_t gpio_input_provider1;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2 != -1
-    static gpio_input_provider_t gpio_input_provider2;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3 != -1
-    static gpio_input_provider_t gpio_input_provider3;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4 != -1
-    static gpio_input_provider_t gpio_input_provider4;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5 != -1
-    static gpio_input_provider_t gpio_input_provider5;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6 != -1
-    static gpio_input_provider_t gpio_input_provider6;
-#endif
-
-
-
+    static gpio_input_provider_t gpio_input_provider;
 #endif
 
 
@@ -653,6 +694,7 @@ void app_main(void) {
     CborParser cbp;
     CborValue value;
     CborError err;
+    ccpeed_err_t cerr;
 
     ESP_LOG_BUFFER_HEXDUMP(TAG, exampleCborRepresentation, sizeof(exampleCborRepresentation), ESP_LOG_INFO);
     err = cbor_parser_init(exampleCborRepresentation, sizeof(exampleCborRepresentation), 0, &cbp, &value);
@@ -662,30 +704,39 @@ void app_main(void) {
         ESP_LOGW(TAG, "Couldn't parse value");
     }
 
+    cerr = subscriptions_read();
+    if (cerr != CCPEED_NO_ERR) {
+        ESP_LOGE(TAG, "Error initialising subscriptionsL: %d", cerr);
+    }
 
 #if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
     dali_provider_init(&daliProvider, CONFIG_CCPEED_PROVIDER_DALI_TX_PIN, CONFIG_CCPEED_PROVIDER_DALI_RX_PIN);
 #endif
 
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+    uint32_t pins[6];
+    size_t num_pins = 0;
+
+
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1 != -1
-    gpio_input_provider_init(&gpio_input_provider1, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1);
+    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1;
 #endif
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2 != -1
-    gpio_input_provider_init(&gpio_input_provider2, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2);
+    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2;
 #endif
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3 != -1
-    gpio_input_provider_init(&gpio_input_provider3, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3);
+    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3;
 #endif
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4 != -1
-    gpio_input_provider_init(&gpio_input_provider4, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4);
+    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4;
 #endif
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5 != -1
-    gpio_input_provider_init(&gpio_input_provider5, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5);
+    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5;
 #endif
 #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6 != -1
-    gpio_input_provider_init(&gpio_input_provider6, defaultMac, CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6);
+    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6;
 #endif
+    gpio_input_provider_init(&gpio_input_provider, defaultMac, pins, num_pins);
 #endif
 
 

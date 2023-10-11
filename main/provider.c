@@ -6,7 +6,6 @@
 
 static linked_list_t providers = {
     .head = NULL,
-    .tail = NULL,
 };
 
 

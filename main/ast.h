@@ -84,5 +84,4 @@ CborError ast_parse_from_cbor(CborValue *val, ast_node_t *node);
 void ast_free(ast_node_t *node);
 CborError ast_serialise_to_cbor(ast_node_t *node, CborEncoder *enc);
 void ast_execute(ast_node_t *n, ast_parameter_t *param0, ast_stack_t *stack);
-
-
+void ast_set_null(ast_node_t *node);

@@ -63,18 +63,19 @@ typedef struct {
     
     // Publicly accessible attributes
     thingif_pushbutton_attr_t attr;
+    uint32_t pin;
 } gpio_input_device_t;
 
 
 typedef struct {
     provider_base_t super;
-    uint32_t pin;
-    gpio_input_device_t device;
+    gpio_input_device_t devices[6];
+    size_t num_pins;
 } gpio_input_provider_t;
 
 
 
-void gpio_input_provider_init(gpio_input_provider_t *prov, uint8_t *mac, uint32_t pin);
+void gpio_input_provider_init(gpio_input_provider_t *self, uint8_t *mac, uint32_t *pins, size_t num_pins);
 
 
 void gpio_input_device_init(gpio_input_device_t *self, gpio_input_provider_t *prov, uint8_t *mac, uint32_t pin);

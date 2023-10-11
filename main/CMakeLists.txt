@@ -10,6 +10,7 @@ idf_component_register(SRCS
                     "dali_device.c"
                     "gpio_input_provider.c"
                     "ast.c"
+                    "subscriptions.c"
                     "interface_brightness.c"
                     "interface_device.c"
                     "interface_hvac.c"

@@ -3,16 +3,15 @@
         {
             "name": "ESP-IDF",
             "includePath": [
-                "${config:idf.espIdfPath}/components/freertos/**",
-                "${workspaceFolder}/managed_components/espressif__mdns/include",
+                "${env:HOME}/esp/esp-idf/components/freertos/**",
                 "${workspaceFolder}/**",
-                "${config:idf.espIdfPath}/components/**",
-                "${config:idf.espIdfPath}/examples/common_components/protocol_examples_common/include"
+                "${env:HOME}/esp/esp-idf/components/**",
+                "${env:HOME}/esp/esp-idf/examples/common_components/protocol_examples_common/include"
             ],
             "browse": {
                 "path": [
                     "${workspaceFolder}",
-                    "${config:idf.espIdfPath}/components"
+                    "${env:HOME}/esp/esp-idf/components"
                 ],
                 "limitSymbolsToIncludedHeaders": false
             },

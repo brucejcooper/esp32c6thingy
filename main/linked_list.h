@@ -11,13 +11,11 @@ extern "C" {
 
 typedef struct linked_list_item_t {
     struct linked_list_item_t *next;
-    struct linked_list_item_t *prev;
 } linked_list_item_t;
 
 
 typedef struct linked_list_t {
     linked_list_item_t *head;
-    linked_list_item_t *tail;
 } linked_list_t;
 
 

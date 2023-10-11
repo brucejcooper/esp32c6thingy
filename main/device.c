@@ -17,7 +17,6 @@ static const char *device_id_type_names[] = {
 
 static linked_list_t devices = {
     .head = NULL,
-    .tail = NULL,
 };
 
 

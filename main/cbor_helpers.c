@@ -1,6 +1,16 @@
 #include "cbor_helpers.h"
 
 
+CborError cbor_expect_uint16(CborValue *val, const uint16_t max_value, uint16_t *out) {
+    uint32_t bigval;
+
+    CborError err = cbor_expect_uint32(val, max_value, &bigval);
+    if (err == CborNoError) {
+        *out = bigval;
+    }
+    return err;
+}
+
 CborError cbor_expect_uint32(CborValue *val, const uint32_t max_value, uint32_t *out) {
     uint64_t tmp;
 

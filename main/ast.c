@@ -28,7 +28,7 @@ static const size_t expected_children[] = {
 
 static const char *TAG = "ast";
 
-static const ast_literal_t nullVal = {
+static const ast_literal_t null_ast = {
     .type = AST_LITERAL_NULL,
     .intVal = 0,
 };
@@ -98,7 +98,7 @@ void ast_execute(ast_node_t *n, ast_parameter_t *param0, ast_stack_t *stack) {
                 // Its falsey
                 ast_execute(n->children + 2, param0, stack);
             } else {
-                ast_stack_push((ast_literal_t *) &nullVal, stack);
+                ast_stack_push((ast_literal_t *) &null_ast, stack);
             }
             break;
 
@@ -398,3 +398,11 @@ void ast_free(ast_node_t *node) {
     }
 }
 
+
+
+void ast_set_null(ast_node_t *node) {
+    node->op = AST_TYPE_LITERAL;
+    node->num_children = 0;
+    node->value.type = AST_LITERAL_NULL;
+    node->value.ptr = NULL;
+}
