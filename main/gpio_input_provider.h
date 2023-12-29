@@ -15,8 +15,6 @@ extern "C" {
 #include "ccpeed_err.h"
 #include "dali_provider.h"
 #include "device.h"
-#include "ast.h"
-#include "interface_pushbutton.h"
 
 #define GPIO_INPUT_PROVIDER_ID 3
 
@@ -62,7 +60,7 @@ typedef struct {
     esp_timer_handle_t timer;
     
     // Publicly accessible attributes
-    thingif_pushbutton_attr_t attr;
+    // thingif_pushbutton_attr_t attr;
     uint32_t pin;
 } gpio_input_device_t;
 

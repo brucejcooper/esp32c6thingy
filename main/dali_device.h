@@ -15,8 +15,6 @@ extern "C" {
 #include "ccpeed_err.h"
 #include "dali_provider.h"
 #include "device.h"
-#include "interface_switch.h"
-#include "interface_brightness.h"
 
 
 // Device Addressed Commands (all have bit 8 set)
@@ -132,8 +130,6 @@ typedef struct {
 
     uint8_t lightType;
     uint16_t group_membership;
-    thingif_switch_attr_t switch_attr;
-    thingif_brightness_attr_t brightness_attr;
 } dali_device_t;
 
 

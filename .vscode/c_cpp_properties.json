@@ -16,7 +16,7 @@
                 "limitSymbolsToIncludedHeaders": false
             },
             "defines": [],
-            "compilerPath": "/home/bruce/.espressif/tools/riscv32-esp-elf/esp-12.2.0_20230208/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
+            "compilerPath": "${env:HOME}/.espressif/tools/riscv32-esp-elf/esp-13.2.0_20230928/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
             "cStandard": "c11",
             "cppStandard": "c++17"
         }

@@ -9,8 +9,6 @@
 #include "freertos/event_groups.h"
 #include "provider.h"
 #include "device.h"
-#include "interface_switch.h"
-#include "interface_brightness.h"
 #include <string.h>
 #include "cbor_helpers.h"
 #include "dali_device.h"

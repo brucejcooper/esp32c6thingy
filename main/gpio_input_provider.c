@@ -4,7 +4,6 @@
 #include "ccpeed_err.h"
 #include "device.h"
 #include "provider.h"
-#include "interface_pushbutton.h"
 #include <driver/gpio.h>
 #include "freertos/FreeRTOS.h"
 #include <freertos/task.h>
@@ -13,7 +12,7 @@
 #include "esp_timer.h"
 
 static int gpio_input_aspects[] = {
-    THINGIF_PUSHBUTTON
+    // THINGIF_PUSHBUTTON
 };
 
 static TaskHandle_t button_action_handler_task = NULL;
@@ -215,72 +214,72 @@ void button_action_handler(void *args) {
 
 
 
-ccpeed_err_t gpio_device_set_attr(struct device_t *gendev, int iface_id, CborValue *val) {
-    gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
-    ccpeed_err_t err;
-    thingif_pushbutton_attr_t newAttr = THINGIF_PUSHBUTTON_ATTR_INIT;
+// ccpeed_err_t gpio_device_set_attr(struct device_t *gendev, int iface_id, CborValue *val) {
+//     gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
+//     ccpeed_err_t err;
+//     thingif_pushbutton_attr_t newAttr = THINGIF_PUSHBUTTON_ATTR_INIT;
 
-    switch (iface_id) {
-        case THINGIF_PUSHBUTTON:
-            err = thingif_pushbutton_attr_read(&newAttr, val);
-            if (err != CCPEED_NO_ERR) {
-                return err;
-            }
+//     switch (iface_id) {
+//         case THINGIF_PUSHBUTTON:
+//             err = thingif_pushbutton_attr_read(&newAttr, val);
+//             if (err != CCPEED_NO_ERR) {
+//                 return err;
+//             }
 
-            if (newAttr.is_click_max_duration_present && newAttr.click_max_duration != dev->attr.click_max_duration) {
-                dev->attr.click_max_duration = newAttr.click_max_duration;
-                dev->attr.is_click_max_duration_present = true;
-            }
+//             if (newAttr.is_click_max_duration_present && newAttr.click_max_duration != dev->attr.click_max_duration) {
+//                 dev->attr.click_max_duration = newAttr.click_max_duration;
+//                 dev->attr.is_click_max_duration_present = true;
+//             }
 
-            if (newAttr.is_longclick_delay_present && newAttr.longclick_delay != dev->attr.longclick_delay) {
-                dev->attr.longclick_delay = newAttr.longclick_delay;
-                dev->attr.is_longclick_delay_present = true;
-            }
+//             if (newAttr.is_longclick_delay_present && newAttr.longclick_delay != dev->attr.longclick_delay) {
+//                 dev->attr.longclick_delay = newAttr.longclick_delay;
+//                 dev->attr.is_longclick_delay_present = true;
+//             }
 
-            if (newAttr.is_longclick_repeat_delay_present && newAttr.longclick_repeat_delay != dev->attr.longclick_repeat_delay) {
-                dev->attr.longclick_repeat_delay = newAttr.longclick_repeat_delay;
-                dev->attr.is_longclick_repeat_delay_present = true;
-            }
+//             if (newAttr.is_longclick_repeat_delay_present && newAttr.longclick_repeat_delay != dev->attr.longclick_repeat_delay) {
+//                 dev->attr.longclick_repeat_delay = newAttr.longclick_repeat_delay;
+//                 dev->attr.is_longclick_repeat_delay_present = true;
+//             }
 
-            if (newAttr.is_on_press_present) {
-                if (dev->attr.is_on_click_present) {
-                    ast_free(&(dev->attr.on_press));
-                }
-                dev->attr.is_on_press_present = true;
-                dev->attr.on_press = newAttr.on_press;
-            }
+//             if (newAttr.is_on_press_present) {
+//                 if (dev->attr.is_on_click_present) {
+//                     ast_free(&(dev->attr.on_press));
+//                 }
+//                 dev->attr.is_on_press_present = true;
+//                 dev->attr.on_press = newAttr.on_press;
+//             }
 
-            if (newAttr.is_on_release_present) {
-                if (dev->attr.is_on_release_present) {
-                    ast_free(&(dev->attr.on_release));
-                }
-                dev->attr.is_on_release_present = true;
-                dev->attr.on_release = newAttr.on_release;
-            }
+//             if (newAttr.is_on_release_present) {
+//                 if (dev->attr.is_on_release_present) {
+//                     ast_free(&(dev->attr.on_release));
+//                 }
+//                 dev->attr.is_on_release_present = true;
+//                 dev->attr.on_release = newAttr.on_release;
+//             }
 
-            if (newAttr.is_on_click_present) {
-                if (dev->attr.is_on_click_present) {
-                    ast_free(&(dev->attr.on_click));
-                }
-                dev->attr.is_on_click_present = true;
-                dev->attr.on_click = newAttr.on_click;
-            }
+//             if (newAttr.is_on_click_present) {
+//                 if (dev->attr.is_on_click_present) {
+//                     ast_free(&(dev->attr.on_click));
+//                 }
+//                 dev->attr.is_on_click_present = true;
+//                 dev->attr.on_click = newAttr.on_click;
+//             }
 
-            if (newAttr.is_on_long_press_present) {
-                if (dev->attr.is_on_long_press_present) {
-                    ast_free(&(dev->attr.on_long_press));
-                }
-                dev->attr.is_on_long_press_present = true;
-                dev->attr.on_long_press = newAttr.on_long_press;
-            }
+//             if (newAttr.is_on_long_press_present) {
+//                 if (dev->attr.is_on_long_press_present) {
+//                     ast_free(&(dev->attr.on_long_press));
+//                 }
+//                 dev->attr.is_on_long_press_present = true;
+//                 dev->attr.on_long_press = newAttr.on_long_press;
+//             }
 
-            break;
-        default:
-            return CCPEED_ERROR_INVALID;
-    }
-    return CCPEED_NO_ERR;
+//             break;
+//         default:
+//             return CCPEED_ERROR_INVALID;
+//     }
+//     return CCPEED_NO_ERR;
 
-}
+// }
 
 ccpeed_err_t gpio_device_process_service_call(struct device_t *gendev, int iface_id, int serviceId, CborValue *params, size_t numParams) {
     // gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
@@ -288,55 +287,55 @@ ccpeed_err_t gpio_device_process_service_call(struct device_t *gendev, int iface
     return CCPEED_ERROR_INVALID;
 }
 
-ccpeed_err_t gpio_device_encode_attributes(struct device_t *gendev, int iface_id, CborEncoder *encoder) {
-    gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
-    ccpeed_err_t err;
+// ccpeed_err_t gpio_device_encode_attributes(struct device_t *gendev, int iface_id, CborEncoder *encoder) {
+//     gpio_input_device_t *dev = (gpio_input_device_t *) gendev;
+//     ccpeed_err_t err;
 
-    switch (iface_id) {
-        case THINGIF_PUSHBUTTON:
-            err = thingif_pushbutton_attr_write(&dev->attr, encoder);
-            if (err != CCPEED_NO_ERR) {
-                return err;
-            }
-            break;
-        default:
-            return CCPEED_ERROR_INVALID;
-    }
-    return CCPEED_NO_ERR;
-}
+//     switch (iface_id) {
+//         case THINGIF_PUSHBUTTON:
+//             err = thingif_pushbutton_attr_write(&dev->attr, encoder);
+//             if (err != CCPEED_NO_ERR) {
+//                 return err;
+//             }
+//             break;
+//         default:
+//             return CCPEED_ERROR_INVALID;
+//     }
+//     return CCPEED_NO_ERR;
+// }
 
 
 
 void gpio_input_provider_init(gpio_input_provider_t *self, uint8_t *mac, uint32_t *pins, size_t num_pins) {
     ESP_LOGI(TAG, "Initialising input provider for %d pins", num_pins);
-    provider_init(&self->super, GPIO_INPUT_PROVIDER_ID, gpio_device_encode_attributes, gpio_device_set_attr, gpio_device_process_service_call);
-    esp_err_t err;
+    // provider_init(&self->super, GPIO_INPUT_PROVIDER_ID, gpio_device_encode_attributes, gpio_device_set_attr, gpio_device_process_service_call);
+    // esp_err_t err;
 
-    uint32_t mask = 0;
-    for (int i = 0; i < num_pins; i++) {
-        mask |= (1 << pins[i]);
-    }
+    // uint32_t mask = 0;
+    // for (int i = 0; i < num_pins; i++) {
+    //     mask |= (1 << pins[i]);
+    // }
 
-    gpio_config_t gpioConfig = {
-        .mode = GPIO_MODE_INPUT,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .intr_type = GPIO_INTR_ANYEDGE,
-        .pin_bit_mask = mask,
-    };
-    err = gpio_install_isr_service(0);
-    assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE);
-    ESP_ERROR_CHECK(gpio_config(&gpioConfig));
+    // gpio_config_t gpioConfig = {
+    //     .mode = GPIO_MODE_INPUT,
+    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    //     .pull_up_en = GPIO_PULLUP_ENABLE,
+    //     .intr_type = GPIO_INTR_ANYEDGE,
+    //     .pin_bit_mask = mask,
+    // };
+    // err = gpio_install_isr_service(0);
+    // assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE);
+    // ESP_ERROR_CHECK(gpio_config(&gpioConfig));
 
-    self->num_pins = num_pins;
-    for (int pin = 0; pin < num_pins; pin++) {
-        gpio_input_device_init(&self->devices[pin], self, mac, pins[pin]);
-        add_device(&self->devices[pin].super);
-        ESP_ERROR_CHECK(gpio_isr_handler_add(pins[pin], gpio_isr, &self->devices[pin]));
-    }
+    // self->num_pins = num_pins;
+    // for (int pin = 0; pin < num_pins; pin++) {
+    //     gpio_input_device_init(&self->devices[pin], self, mac, pins[pin]);
+    //     add_device(&self->devices[pin].super);
+    //     ESP_ERROR_CHECK(gpio_isr_handler_add(pins[pin], gpio_isr, &self->devices[pin]));
+    // }
 
-    button_action_queue = xQueueCreate(10, sizeof(button_event_t));
-    assert(xTaskCreate(button_action_handler, "gpio_input_handler", 2048, NULL, 5, &button_action_handler_task) == pdTRUE);
+    // button_action_queue = xQueueCreate(10, sizeof(button_event_t));
+    // assert(xTaskCreate(button_action_handler, "gpio_input_handler", 2048, NULL, 5, &button_action_handler_task) == pdTRUE);
 }
 
 
@@ -353,20 +352,20 @@ void gpio_input_device_init(gpio_input_device_t *self, gpio_input_provider_t *pr
 
     device_init(&self->super, &prov->super, &id, gpio_input_aspects, 1);
     self->pin = pin;
-    self->attr.is_click_max_duration_present = true;
-    self->attr.click_max_duration = 750;
-    self->attr.is_longclick_delay_present = true;
-    self->attr.longclick_delay = 750;
-    self->attr.is_longclick_repeat_delay_present = true;
-    self->attr.longclick_repeat_delay = 250;
-    self->attr.is_on_click_present = true;
-    ast_set_null(&self->attr.on_click);
-    self->attr.is_on_long_press_present = true;
-    ast_set_null(&self->attr.on_long_press);
-    self->attr.is_on_press_present = true;
-    ast_set_null(&self->attr.on_press);
-    self->attr.is_on_release_present = true;
-    ast_set_null(&self->attr.on_release);
+    // self->attr.is_click_max_duration_present = true;
+    // self->attr.click_max_duration = 750;
+    // self->attr.is_longclick_delay_present = true;
+    // self->attr.longclick_delay = 750;
+    // self->attr.is_longclick_repeat_delay_present = true;
+    // self->attr.longclick_repeat_delay = 250;
+    // self->attr.is_on_click_present = true;
+    // ast_set_null(&self->attr.on_click);
+    // self->attr.is_on_long_press_present = true;
+    // ast_set_null(&self->attr.on_long_press);
+    // self->attr.is_on_press_present = true;
+    // ast_set_null(&self->attr.on_press);
+    // self->attr.is_on_release_present = true;
+    // ast_set_null(&self->attr.on_release);
 
     
     self->last_change = xTaskGetTickCount();

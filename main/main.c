@@ -18,22 +18,24 @@
 #include <sys/socket.h>
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <freertos/task.h>
 #include "freertos/event_groups.h"
 
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include <esp_vfs.h>
+#include <esp_spiffs.h>
 
 #include "nvs_flash.h"
 
 #include "root_provider.h"
 #include "dali_provider.h"
-#include "gpio_input_provider.h"
-#include "dali_device.h"
+// #include "gpio_input_provider.h"
+// #include "dali_device.h"
 #include "provider.h"
-#include "interface_switch.h"
-#include "interface_brightness.h"
+// #include "interface_switch.h"
+// #include "interface_brightness.h"
 #include "subscriptions.h"
 
 
@@ -58,7 +60,9 @@
 #include <openthread/coap.h>
 #include "openthread/tasklet.h"
 #include "esp_vfs_eventfd.h"
-#include "ast.h"
+// #include "ast.h"
+
+#include "lua_event_loop.h"
 
 #include "device.h"
 
@@ -98,34 +102,6 @@ static otCoapResource testResource = {
     .mNext = NULL,
     .mUriPath = "d"
 };
-
-
-static const uint8_t exampleCborRepresentation[] = {
-    0x84, AST_TYPE_CONDITIONAL,
-        0x83, AST_TYPE_EQUALS,
-            0x83, AST_TYPE_INDEX,
-                0x82, AST_TYPE_PARAM, 0x00,
-                0x00,
-            0x00,
-        0x84, AST_TYPE_ARRAY, // Truthy action - Create a literal array with 3 elements.
-            0x85, AST_TYPE_ARRAY,
-                DEVID_TYPE_GTIN,
-                0x46, 0x08, 0x30, 0xEB, 0xFE, 0x32, 0x0B,
-                DEVID_TYPE_SERIAL_NUMBER,
-                0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x0F, 0xB5,  // byte string
-            THINGIF_SWITCH,
-            THINGIF_SWITCH_OP_TOGGLE_ON, 
-        0x84, AST_TYPE_ARRAY, // Falsy action 
-            0x85, AST_TYPE_ARRAY,
-                DEVID_TYPE_GTIN,
-                0x46, 0x08, 0x30, 0xEB, 0xFE, 0x32, 0x0B,
-                DEVID_TYPE_SERIAL_NUMBER,
-                0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x0F, 0xB5,  // byte string
-            THINGIF_BRIGHTNESS,
-            THINGIF_BRIGHTNESS_OP_RECALL_MAX_LEVEL,    
-};
-
-
 
 
 
@@ -583,6 +559,8 @@ end:
 }
 
 
+
+
 static void ot_task_worker(void *aContext)
 {
     esp_openthread_platform_config_t config = {
@@ -660,27 +638,53 @@ static void ot_task_worker(void *aContext)
 
 
 static root_provider_t rootProvider;
-#if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
-    static dali_provider_t daliProvider;
-#endif
-
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
-    static gpio_input_provider_t gpio_input_provider;
-#endif
 
 
 void app_main(void) {
-
     esp_vfs_eventfd_config_t eventfd_config = {
         .max_fds = 5,
     };
-
-
     ESP_ERROR_CHECK(nvs_flash_init() );
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_vfs_eventfd_register(&eventfd_config));
     ESP_ERROR_CHECK(esp_efuse_mac_get_default(defaultMac));
+
+
+    ESP_LOGI(TAG, "Wot!?::!:!:!!!!!!!!!!!");
+
+    esp_vfs_spiffs_conf_t conf = {
+      .base_path = "/lua",
+      .partition_label = NULL,
+      .max_files = 5,
+      .format_if_mount_failed = false
+    };
+
+    // Use settings defined above to initialize and mount SPIFFS filesystem.
+    // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return;
+    }
+
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info(NULL, &total, &used);
+    ESP_LOGW(TAG, "RET %d", ret);
+    if (ret != ESP_OK) {
+        ESP_LOGI(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    }
+
+
 
     char *ptr = defaultMacStr;
     for (int i = 0; i < 8; i++) {
@@ -690,54 +694,60 @@ void app_main(void) {
     xTaskCreate(ot_task_worker, "ot_cli_main", 10240, xTaskGetCurrentTaskHandle(), 5, NULL);
     root_provider_init(&rootProvider);
 
-    ast_node_t expressionNode;
-    CborParser cbp;
-    CborValue value;
-    CborError err;
-    ccpeed_err_t cerr;
+    // ast_node_t expressionNode;
+    // CborParser cbp;
+    // CborValue value;
+    // CborError err;
+    // ccpeed_err_t cerr;
 
-    ESP_LOG_BUFFER_HEXDUMP(TAG, exampleCborRepresentation, sizeof(exampleCborRepresentation), ESP_LOG_INFO);
-    err = cbor_parser_init(exampleCborRepresentation, sizeof(exampleCborRepresentation), 0, &cbp, &value);
-    assert(err == CborNoError);
-    err = ast_parse_from_cbor(&value, &expressionNode);
-    if (err != CborNoError) {
-        ESP_LOGW(TAG, "Couldn't parse value");
+    // ESP_LOG_BUFFER_HEXDUMP(TAG, exampleCborRepresentation, sizeof(exampleCborRepresentation), ESP_LOG_INFO);
+    // err = cbor_parser_init(exampleCborRepresentation, sizeof(exampleCborRepresentation), 0, &cbp, &value);
+    // assert(err == CborNoError);
+    // err = ast_parse_from_cbor(&value, &expressionNode);
+    // if (err != CborNoError) {
+    //     ESP_LOGW(TAG, "Couldn't parse value");
+    // }
+
+    // cerr = subscriptions_read();
+    // if (cerr != CCPEED_NO_ERR) {
+    //     ESP_LOGE(TAG, "Error initialising subscriptionsL: %d", cerr);
+    // }
+
+
+    if (init_lua() != ESP_OK) {
+        ESP_LOGE(TAG, "Error loading up LUA interpreter");
     }
 
-    cerr = subscriptions_read();
-    if (cerr != CCPEED_NO_ERR) {
-        ESP_LOGE(TAG, "Error initialising subscriptionsL: %d", cerr);
-    }
 
-#if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
-    dali_provider_init(&daliProvider, CONFIG_CCPEED_PROVIDER_DALI_TX_PIN, CONFIG_CCPEED_PROVIDER_DALI_RX_PIN);
-#endif
+// #if CONFIG_CCPEED_PROVIDER_DALI_ENABLE
+//     dali_provider_init(&daliProvider, CONFIG_CCPEED_PROVIDER_DALI_TX_PIN, CONFIG_CCPEED_PROVIDER_DALI_RX_PIN);
+// #endif
 
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
-    uint32_t pins[6];
-    size_t num_pins = 0;
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_ENABLE
+//     uint32_t pins[6];
+//     size_t num_pins = 0;
 
 
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1 != -1
-    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2 != -1
-    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3 != -1
-    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4 != -1
-    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5 != -1
-    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5;
-#endif
-#if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6 != -1
-    pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6;
-#endif
-    gpio_input_provider_init(&gpio_input_provider, defaultMac, pins, num_pins);
-#endif
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1 != -1
+//     pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_1;
+// #endif
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2 != -1
+//     pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_2;
+// #endif
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3 != -1
+//     pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_3;
+// #endif
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4 != -1
+//     pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_4;
+// #endif
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5 != -1
+//     pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_5;
+// #endif
+// #if CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6 != -1
+//     pins[num_pins++] = CONFIG_CCPEED_PROVIDER_GPIO_BUTTON_6;
+// #endif
+//     gpio_input_provider_init(&gpio_input_provider, defaultMac, pins, num_pins);
+// #endif
 
 
 }
