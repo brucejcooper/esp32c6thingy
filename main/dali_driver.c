@@ -1,4 +1,4 @@
-#include "dali_provider.h"
+#include "dali_driver.h"
 #include "driver/rmt_tx.h"
 #include "driver/rmt_rx.h"
 #include "driver/gpio.h"
@@ -7,14 +7,10 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 #include "freertos/event_groups.h"
-#include "provider.h"
-#include "device.h"
 #include <string.h>
 #include "cbor_helpers.h"
-#include "dali_device.h"
 
 #include "esp_log.h"
-#include "linked_list.h"
 
 
 #define DALI_BIT_USEC 833
@@ -27,7 +23,7 @@
 
 
 
-#define TAG "dali_provider"
+#define TAG "dali_driver"
 
 static rmt_encoder_handle_t tx_encoder;
 
@@ -44,8 +40,8 @@ typedef struct {
 
 typedef struct {
     uint16_t command;
-    SemaphoreHandle_t waiter;
-    int *result;
+    dali_command_callback_t cb;
+    void *arg;
 } command_t;
 
 
@@ -148,15 +144,15 @@ int reconstructDaliSignal(const rmt_rx_done_event_data_t *d, uint32_t *result) {
 }
 
 
-static void setState(dali_provider_t *self, dali_state_t newState, uint64_t timeout_usec) {
-    assert(self != NULL);
+static void setState(dali_driver_t *driver, dali_state_t newState, uint64_t timeout_usec) {
+    assert(driver != NULL);
     state = newState;
     // Disable any existing timeout
     // Don't check response from this one, as the only possible outcomes are OK or already stopepd. 
-    esp_timer_stop(self->rxTimeoutTimer);
+    esp_timer_stop(driver->rxTimeoutTimer);
     if (timeout_usec) {
         // Set timeout.
-        ESP_ERROR_CHECK(esp_timer_start_once(self->rxTimeoutTimer, timeout_usec));
+        ESP_ERROR_CHECK(esp_timer_start_once(driver->rxTimeoutTimer, timeout_usec));
     }
 }
 
@@ -165,14 +161,14 @@ static bool rx_transaction_done(rmt_channel_handle_t rx_chan, const rmt_rx_done_
     rx_command_complete_event_t evt;
     uint32_t data;
     esp_err_t err;
-    dali_provider_t *self = user_ctx;
+    dali_driver_t *driver = user_ctx;
 
     // immediately stop the read timeout, to avoid race conditions between the timer and the RMT receiver.
-    esp_timer_stop(self->rxTimeoutTimer);
+    esp_timer_stop(driver->rxTimeoutTimer);
 
     evt.numBits = reconstructDaliSignal(edata, (uint32_t *) &data);
     // Allow receive to start again (always be receiving)
-    err = rmt_receive(rx_chan, self->receiveBuf, sizeof(self->receiveBuf), &rx_config);
+    err = rmt_receive(rx_chan, driver->receiveBuf, sizeof(driver->receiveBuf), &rx_config);
     if (err != ESP_OK) {
         abort();
     }
@@ -182,7 +178,7 @@ static bool rx_transaction_done(rmt_channel_handle_t rx_chan, const rmt_rx_done_
         case STATE_WAITING_FOR_3RD_PARTY:
             // This is a 3rd party command, wait for the response as well. 
             // No need to send an event.
-            setState(self, STATE_WAITING_FOR_RESPONSE, 20000);
+            setState(driver, STATE_WAITING_FOR_RESPONSE, 20000);
             break;
         case STATE_TRANSMITTING:
             // Got read tx end event while transmitting.  This should never happen
@@ -193,14 +189,14 @@ static bool rx_transaction_done(rmt_channel_handle_t rx_chan, const rmt_rx_done_
             // TODO confirm it matches what we were sending.  If it does not, there was a collision or other bus error
             // Timer is max time between finishing of the command readback and the finishing of receiving the response with maximum delay between them
             // I'm not 100% sure what this is, but its close to 20ms (probably closer to 17, but leniency is good)
-            setState(self, STATE_WAITING_FOR_RESPONSE, 20000);
+            setState(driver, STATE_WAITING_FOR_RESPONSE, 20000);
             break;
         case STATE_WAITING_FOR_RESPONSE:
             // after receiving a reverse frame, we must wait at least 6 half bit periods (approx 2.5ms) before transmitting again.
-            setState(self, STATE_POST_RESPONSE_DEADTIME, 2500);
+            setState(driver, STATE_POST_RESPONSE_DEADTIME, 2500);
             if (evt.numBits == 8) {
                 evt.response = (int) data;
-                xQueueSendFromISR(self->command_complete_queue, &evt, &high_task_wakeup);
+                xQueueSendFromISR(driver->command_complete_queue, &evt, &high_task_wakeup);
             } else {
                 // Invalid response length.
                 ESP_EARLY_LOGI(TAG, "Received %d bits in response, which is wrong!", evt.numBits);
@@ -221,12 +217,12 @@ static bool rx_transaction_done(rmt_channel_handle_t rx_chan, const rmt_rx_done_
 }
 
 static bool tx_transaction_done(rmt_channel_handle_t tx_chan, const rmt_tx_done_event_data_t *edata, void *user_ctx) {
-    dali_provider_t *self = user_ctx;
+    dali_driver_t *driver = user_ctx;
 
     BaseType_t high_task_wakeup = pdFALSE;
     // This only ever happens after transmit of a command has just completed.  This means 
     assert(state == STATE_TRANSMITTING);
-    setState(self, STATE_WAITING_FOR_READBACK, 2200);
+    setState(driver, STATE_WAITING_FOR_READBACK, 2200);
     // Set the receive timeout
     // xQueueSendFromISR(rx_wait_queue, &evt, &high_task_wakeup);
     return high_task_wakeup == pdTRUE;
@@ -235,8 +231,8 @@ static bool tx_transaction_done(rmt_channel_handle_t tx_chan, const rmt_tx_done_
 static void rx_timer_expired(void *args) {
     rx_command_complete_event_t evt;
     BaseType_t high_task_wakeup = pdFALSE;
-    dali_provider_t *self = args;
-    assert(self != NULL);
+    dali_driver_t *driver = args;
+    assert(driver != NULL);
 
     switch (state) {
         case STATE_WAITING_FOR_3RD_PARTY:
@@ -249,19 +245,19 @@ static void rx_timer_expired(void *args) {
             // TODO notify that there's a NAK. 
             evt.numBits = 0;
             evt.response = DALI_RESPONSE_NAK;
-            setState(self, STATE_WAITING_FOR_3RD_PARTY, 0);
-            xQueueSendFromISR(self->command_complete_queue, &evt, &high_task_wakeup);
+            setState(driver, STATE_WAITING_FOR_3RD_PARTY, 0);
+            xQueueSendFromISR(driver->command_complete_queue, &evt, &high_task_wakeup);
             break;
         case STATE_COLLISION:
             // Collisions happen while transmitting.  We have cleared the state now, so this means that our transmit failed.  Let
             // the outer loop know. 
             evt.numBits = 0;
             evt.response = DALI_RESPONSE_COLLISION;
-            setState(self, STATE_WAITING_FOR_3RD_PARTY, 0);
-            xQueueSendFromISR(self->command_complete_queue, &evt, &high_task_wakeup);
+            setState(driver, STATE_WAITING_FOR_3RD_PARTY, 0);
+            xQueueSendFromISR(driver->command_complete_queue, &evt, &high_task_wakeup);
             break;
         case STATE_POST_RESPONSE_DEADTIME:
-            setState(self, STATE_WAITING_FOR_3RD_PARTY, 0);
+            setState(driver, STATE_WAITING_FOR_3RD_PARTY, 0);
             break;
 
     }
@@ -275,44 +271,40 @@ static inline void commandtoMSBFirstOrder(uint16_t value, uint8_t *buf) {
 
 
 
-ccpeed_err_t dali_send_command(dali_provider_t *self, uint16_t value, TickType_t ticksToWait) {
-
+ccpeed_err_t dali_send_command(dali_driver_t *driver, uint16_t value, dali_command_callback_t cb, void *arg) {
     // Ensure the bytes are in the right order (most significant byte first)
-    command_t command;
-    int result = DALI_RESPONSE_TIMEOUT;
-    command.command = value;
-    if (ticksToWait != 0) {
-        command.waiter = xSemaphoreCreateBinary();
-    } else {
-        command.waiter = NULL;
-    }
-    command.result = &result;
+    command_t command = {
+        .command = value,
+        .cb = cb,
+        .arg = arg,
+    };
     // send the received RMT symbols to the parser task
     ESP_LOGD(TAG, "Enqueueing 0x%04x", value);
-    if (xQueueSend(self->pending_cmd_queue, &command, 0) == pdFALSE) {
+    if (xQueueSend(driver->pending_cmd_queue, &command, 0) == pdFALSE) {
         ESP_LOGW(TAG, "TX Queue overflow");
-        abort();
+        return CCPEED_ERROR_NOMEM;
     }
+    return CCPEED_NO_ERR;
 
-    if (ticksToWait != 0) {
-        if (xSemaphoreTake(command.waiter, ticksToWait) == pdTRUE) {
-            // We got a result, which already should have been copied into result. 
-            ESP_LOGD(TAG, "Command completed, returning 0x%02x", result);
-        } else {
-            ESP_LOGE(TAG, "Timeout while waiting for command response");
-            // timeout
-            result = DALI_RESPONSE_TIMEOUT;
-        }
-        vSemaphoreDelete(command.waiter);
-    }
-    return result;
+    // if (ticksToWait != 0) {
+    //     if (xSemaphoreTake(command.waiter, ticksToWait) == pdTRUE) {
+    //         // We got a result, which already should have been copied into result. 
+    //         ESP_LOGD(TAG, "Command completed, returning 0x%02x", result);
+    //     } else {
+    //         ESP_LOGE(TAG, "Timeout while waiting for command response");
+    //         // timeout
+    //         result = DALI_RESPONSE_TIMEOUT;
+    //     }
+    //     vSemaphoreDelete(command.waiter);
+    // }
+    // return result;
 }
 
 
 
 
 
-static void sendCmdToDALIBus(dali_provider_t *self, command_t *command) {
+static void sendCmdToDALIBus(dali_driver_t *driver, command_t *command) {
     const rmt_transmit_config_t tx_config = {
         .loop_count = 0,
         .flags.eot_level = 0,
@@ -331,23 +323,19 @@ static void sendCmdToDALIBus(dali_provider_t *self, command_t *command) {
         // TODO what happens if it stays stuck?  Probably should have some form of watchdog.
         taskYIELD();
     }
-    setState(self, STATE_TRANSMITTING, 0);
-    ESP_ERROR_CHECK(rmt_transmit(self->tx_chan, tx_encoder, buf, 2, &tx_config)); 
+    setState(driver, STATE_TRANSMITTING, 0);
+    ESP_ERROR_CHECK(rmt_transmit(driver->tx_chan, tx_encoder, buf, 2, &tx_config)); 
 
     // Wait for transmission to be complete.
-    if (xQueueReceive(self->command_complete_queue, &completeEvent, pdMS_TO_TICKS(50)) != pdTRUE) {
+    if (xQueueReceive(driver->command_complete_queue, &completeEvent, pdMS_TO_TICKS(50)) != pdTRUE) {
         // This should never happen.
         ESP_LOGE(TAG, "Transmit did not complete within reasonable time. Aborting");
         abort();
     }
     // TODO perform retries upon collision, up to a maximum number of times. 
     assert(completeEvent.numBits == 0 || completeEvent.numBits == 8);
-    *(command->result) = completeEvent.response;
-    ESP_LOGD(TAG, "Result is %d", *(command->result));
-
-    // Notify the caller that the command has completed.
-    if (command->waiter != NULL) {
-        xSemaphoreGive(command->waiter);
+    if (command->cb) {
+        command->cb(completeEvent.response, command->arg);
     }
 }
 
@@ -355,7 +343,7 @@ static void sendCmdToDALIBus(dali_provider_t *self, command_t *command) {
 
 static void dali_transcieve_worker(void *aContext) {
     command_t command;
-    dali_provider_t *self = aContext;
+    dali_driver_t *self = aContext;
 
     esp_err_t err = rmt_receive(self->rx_chan, self->receiveBuf, sizeof(self->receiveBuf), &rx_config);
     if (err != ESP_OK) {
@@ -375,80 +363,79 @@ static void dali_transcieve_worker(void *aContext) {
 }
 
 
-static ccpeed_err_t dali_provider_scan(dali_provider_t *provider) {
-    device_identifier_t serial;
-    ccpeed_err_t err;
-    char buf[64];
+// static ccpeed_err_t dali_provider_scan(dali_driver_t *provider) {
+//     device_identifier_t serial;
+//     ccpeed_err_t err;
+//     char buf[64];
 
-    ESP_LOGI(TAG, "Scanning for DALI Devices");
-    // TODO delete devices that are no longer found (blue paint)
-    // TODO consider short cut for devices that are already allocated. 
-    for (int i = 0; i < 64; i++) {
-        uint16_t shiftedAddr = DALI_GEAR_ADDR(i);
-        dali_device_t *device = dali_device_find_by_addr(shiftedAddr);
-        int presentResponse = dali_send_command(provider, shiftedAddr | DALI_CMD_QUERY_CONTROL_GEAR_PRESENT, pdMS_TO_TICKS(500));
-        if (presentResponse < DALI_RESPONSE_NAK) {
-            return CCPEED_ERROR_BUS_ERROR;
-        }
+//     ESP_LOGI(TAG, "Scanning for DALI Devices");
+//     // TODO delete devices that are no longer found (blue paint)
+//     // TODO consider short cut for devices that are already allocated. 
+//     for (int i = 0; i < 64; i++) {
+//         uint16_t shiftedAddr = DALI_GEAR_ADDR(i);
+//         dali_device_t *device = dali_device_find_by_addr(shiftedAddr);
+//         int presentResponse = dali_send_command(provider, shiftedAddr | DALI_CMD_QUERY_CONTROL_GEAR_PRESENT, pdMS_TO_TICKS(500));
+//         if (presentResponse < DALI_RESPONSE_NAK) {
+//             return CCPEED_ERROR_BUS_ERROR;
+//         }
 
-        // If a device was present, it will respond with 0xFF
-        if (presentResponse != 0xFF) {
-            // Device at this index does not exist.
-            ESP_LOGD(TAG, "Device at DALI gear address %d not found", i);
+//         // If a device was present, it will respond with 0xFF
+//         if (presentResponse != 0xFF) {
+//             // Device at this index does not exist.
+//             ESP_LOGD(TAG, "Device at DALI gear address %d not found", i);
 
-            if (device) {
-                ESP_LOGI(TAG, "Deleting old device %s at DALI gear address %d", device_identifier_to_str(&device->super.id, buf, sizeof(buf)), i);
-                device_delete((device_t *) device);
-                device = NULL;
-            }
-            continue;
-        }
+//             if (device) {
+//                 ESP_LOGI(TAG, "Deleting old device %s at DALI gear address %d", device_identifier_to_str(&device->super.id, buf, sizeof(buf)), i);
+//                 device_delete((device_t *) device);
+//                 device = NULL;
+//             }
+//             continue;
+//         }
 
-        // Check that the serial numbers still match. 
-        err = dali_device_read_serial(provider, shiftedAddr, &serial);
-        if (err != CCPEED_NO_ERR) {
-            return CCPEED_ERROR_BUS_ERROR;
-        }
+//         // Check that the serial numbers still match. 
+//         err = dali_device_read_serial(provider, shiftedAddr, &serial);
+//         if (err != CCPEED_NO_ERR) {
+//             return CCPEED_ERROR_BUS_ERROR;
+//         }
 
-        if (device && !device_identifier_equals(&serial, &device->super.id)) {
-            // The device at the logical address has changed.
-            ESP_LOGW(TAG, "Device serial at DALI gear address %d has changed. Removing and re-adding.", i);
-            device_delete((device_t *) device);
-            device = NULL;
-            abort();
-        } 
+//         if (device && !device_identifier_equals(&serial, &device->super.id)) {
+//             // The device at the logical address has changed.
+//             ESP_LOGW(TAG, "Device serial at DALI gear address %d has changed. Removing and re-adding.", i);
+//             device_delete((device_t *) device);
+//             device = NULL;
+//             abort();
+//         } 
         
-        if (!device) {
-            ESP_LOGI(TAG, "Creating new device at DALI gear address %d for serial %s", i, device_identifier_to_str(&serial, buf, sizeof(buf)));
-            device = malloc(sizeof(dali_device_t));
-            if (!device) {
-                return CCPEED_ERROR_NOMEM;
-            }
-            dali_device_init(device, provider, &serial, shiftedAddr, presentResponse, 0, 0, 0, 0, 0);
-            add_device((device_t *) device);
-        }
-        ESP_LOGI(TAG, "Updaing parameters of device %s", device_identifier_to_str(&device->super.id, buf, sizeof(buf)));
-        err = dali_device_update_all_attr(device);
-        if (err != CCPEED_NO_ERR) {
-            return err;
-        }
-    }
-    ESP_LOGI(TAG, "Finished scan");
-    return CCPEED_NO_ERR;
-}
+//         if (!device) {
+//             ESP_LOGI(TAG, "Creating new device at DALI gear address %d for serial %s", i, device_identifier_to_str(&serial, buf, sizeof(buf)));
+//             device = malloc(sizeof(dali_device_t));
+//             if (!device) {
+//                 return CCPEED_ERROR_NOMEM;
+//             }
+//             dali_device_init(device, provider, &serial, shiftedAddr, presentResponse, 0, 0, 0, 0, 0);
+//             add_device((device_t *) device);
+//         }
+//         ESP_LOGI(TAG, "Updaing parameters of device %s", device_identifier_to_str(&device->super.id, buf, sizeof(buf)));
+//         err = dali_device_update_all_attr(device);
+//         if (err != CCPEED_NO_ERR) {
+//             return err;
+//         }
+//     }
+//     ESP_LOGI(TAG, "Finished scan");
+//     return CCPEED_NO_ERR;
+// }
 
-static void scanDaliBusTask(void *params) {
-    dali_provider_t *provider = params;
-    dali_provider_scan(provider);
-    vTaskDelete(NULL);
-}
+// static void scanDaliBusTask(void *params) {
+//     dali_driver_t *provider = params;
+//     dali_provider_scan(provider);
+//     vTaskDelete(NULL);
+// }
 
 
-ccpeed_err_t dali_provider_init(dali_provider_t *self, uint32_t txpin, uint32_t rxpin) {
-    provider_init(&self->super, DALI_PROVIDER_ID, dali_device_encode_attributes, dali_device_set_attr, dali_device_process_service_call);
+ccpeed_err_t dali_driver_init(dali_driver_t *driver, uint32_t txpin, uint32_t rxpin) {
 
-    self->tx_pin = txpin;
-    self->rx_pin = rxpin;
+    driver->tx_pin = txpin;
+    driver->rx_pin = rxpin;
     // Set up IO
     // The RMT driver will turn GPIO on first, then drive it to its idle value.  To avoid an unwanted pulse, we setup the GPIO first.
     gpio_config_t gpioConfig = {
@@ -456,62 +443,62 @@ ccpeed_err_t dali_provider_init(dali_provider_t *self, uint32_t txpin, uint32_t 
         .pull_down_en = GPIO_PULLDOWN_ENABLE,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
-        .pin_bit_mask = 1 << self->tx_pin,
+        .pin_bit_mask = 1 << driver->tx_pin,
     };
-    gpio_set_level(self->tx_pin, 0);
+    gpio_set_level(driver->tx_pin, 0);
     gpio_config(&gpioConfig);
 
 
     rmt_tx_channel_config_t txconfig = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
-        .gpio_num = self->tx_pin,
+        .gpio_num = driver->tx_pin,
         .mem_block_symbols = 64,
         .resolution_hz = 1 * 1000 * 1000,
         .trans_queue_depth = 4,
         .flags.invert_out = false,
         .flags.with_dma = false,
     };
-    ESP_ERROR_CHECK(rmt_new_tx_channel(&txconfig, &self->tx_chan));
-    ESP_ERROR_CHECK(rmt_enable(self->tx_chan));
-    ESP_ERROR_CHECK(rmt_tx_register_event_callbacks(self->tx_chan, &txcb, self));
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&txconfig, &driver->tx_chan));
+    ESP_ERROR_CHECK(rmt_enable(driver->tx_chan));
+    ESP_ERROR_CHECK(rmt_tx_register_event_callbacks(driver->tx_chan, &txcb, driver));
     ESP_ERROR_CHECK(rmt_new_dali_encoder(&tx_encoder));
 
     esp_err_t eerr = esp_timer_init();
     assert(eerr == ESP_OK || eerr == ESP_ERR_INVALID_STATE); // To allow for somebody else to have already initialised it.
     esp_timer_create_args_t timer_args = {
         .callback = rx_timer_expired,
-        .arg = self,
+        .arg = driver,
         .dispatch_method = ESP_TIMER_ISR,
         .name = "DALI RX timeout",
         .skip_unhandled_events = true,
     };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &self->rxTimeoutTimer));
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &driver->rxTimeoutTimer));
 
     rmt_rx_channel_config_t rxconfig = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
-        .gpio_num = self->rx_pin,
+        .gpio_num = driver->rx_pin,
         .mem_block_symbols = 64,
         .resolution_hz = 1 * 1000 * 1000,
         .flags.invert_in = false,
         .flags.io_loop_back = false,
         .flags.with_dma = false,
     };
-    ESP_ERROR_CHECK(rmt_new_rx_channel(&rxconfig, &self->rx_chan));
-    ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(self->rx_chan, &rx_callbacks, self));
+    ESP_ERROR_CHECK(rmt_new_rx_channel(&rxconfig, &driver->rx_chan));
+    ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(driver->rx_chan, &rx_callbacks, driver));
     
-    ESP_ERROR_CHECK(rmt_enable(self->rx_chan));
+    ESP_ERROR_CHECK(rmt_enable(driver->rx_chan));
 
-    self->pending_cmd_queue = xQueueCreate(10, sizeof(command_t));
-    self->command_complete_queue = xQueueCreate(1, sizeof(rx_command_complete_event_t) );
+    driver->pending_cmd_queue = xQueueCreate(10, sizeof(command_t));
+    driver->command_complete_queue = xQueueCreate(1, sizeof(rx_command_complete_event_t) );
 
 
     // Set up queues and tasks.
-    xTaskCreate(dali_transcieve_worker, "dali_transcieve_worker", 8192, self, 5, &self->transcieve_task);
+    xTaskCreate(dali_transcieve_worker, "dali_transcieve_worker", 8192, driver, 5, &driver->transcieve_task);
 
     // Schedule an initial scan 
-    ESP_LOGI(TAG, "Scheduling an initial DALI bus scan");
-    xTaskCreate(scanDaliBusTask, "dali_bus_scanner", 4096, self, 4, NULL);
+    // ESP_LOGI(TAG, "Scheduling an initial DALI bus scan");
+    // xTaskCreate(scanDaliBusTask, "dali_bus_scanner", 4096, self, 4, NULL);
 
-    ESP_LOGI(TAG, "Configured DALI provider TX: %lu, RX: %lu", self->tx_pin, self->rx_pin);
+    ESP_LOGI(TAG, "Configured DALI provider TX: %lu, RX: %lu", driver->tx_pin, driver->rx_pin);
     return CCPEED_NO_ERR;
 }

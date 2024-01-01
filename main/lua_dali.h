@@ -1,20 +1,9 @@
-#pragma once
+#ifndef MAIN_DALI_H_
+#define MAIN_DALI_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <lua/lua.h>
+#include <lua/lauxlib.h>
 
-#include <stddef.h>
-#include <stdint.h>
-#include <cbor.h>
-#include "freertos/FreeRTOS.h"
-#include "dali_rmt_encoder.h"
-#include "esp_timer.h"
-#include "freertos/queue.h"
-#include "freertos/task.h"
-#include "ccpeed_err.h"
-#include "dali_provider.h"
-#include "device.h"
 
 
 // Device Addressed Commands (all have bit 8 set)
@@ -124,24 +113,7 @@ extern "C" {
 #define DALI_ID_FROM_ADDR(x) ((x) >> 9)
 
 
-typedef struct {
-    device_t super;
-    uint16_t address; // This is already shifted.
 
-    uint8_t lightType;
-    uint16_t group_membership;
-} dali_device_t;
+int luaopen_dali(lua_State *L);
 
-
-
-void dali_device_init(dali_device_t *self, dali_provider_t *prov, device_identifier_t *serial, uint16_t addr, uint8_t lightType, uint8_t level, uint8_t min_level, uint8_t max_level, uint8_t power_on_level, uint16_t group_membership);
-ccpeed_err_t dali_device_encode_attributes(device_t *_dev, int aspect_id, CborEncoder *encoder);
-ccpeed_err_t dali_device_set_attr(device_t *_dev, int aspect_id, CborValue *val);
-ccpeed_err_t dali_device_process_service_call(device_t *device, int aspectId, int serviceId, CborValue *attr, size_t attr_count);
-dali_device_t *dali_device_find_by_addr(uint16_t addr);
-ccpeed_err_t dali_device_read_serial(dali_provider_t *provider, uint16_t addr, device_identifier_t *serial);
-ccpeed_err_t dali_device_update_all_attr(dali_device_t *device);
-
-#ifdef __cplusplus
-}
-#endif
+#endif /* MAIN_GPIO_H_ */

@@ -29,13 +29,17 @@ static int config_input(lua_State *L) {
         .intr_type = GPIO_INTR_DISABLE, // we start out with no interrupts. 
         .pin_bit_mask = (1 << pin),
     };
-    ESP_ERROR_CHECK(gpio_config(&gpioConfig));
-    // TODO return error on failure, instead of panicing.
+    
+    esp_err_t err = gpio_config(&gpioConfig);
+    if (err != ESP_OK) {
+        luaL_error(L, "Could not configure gpio pin err code 0x%02x", err);
+        return 1;
+    }
     return 0;
 }
 
 
-static const struct luaL_Reg device_funcs[] = {
+static const struct luaL_Reg log_funcs[] = {
     { "get", get },
     { "config_input", config_input },
     { NULL, NULL }
@@ -43,7 +47,7 @@ static const struct luaL_Reg device_funcs[] = {
 
 int luaopen_gpio(lua_State *L)
 {
-    luaL_newlib(L, device_funcs);
+    luaL_newlib(L, log_funcs);
     esp_err_t err = gpio_install_isr_service(0);
     assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE);
 

@@ -6,7 +6,6 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
-#include "provider.h"
 #include <cbor.h>
 #include "freertos/FreeRTOS.h"
 #include "dali_rmt_encoder.h"
@@ -14,9 +13,6 @@ extern "C" {
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "ccpeed_err.h"
-#include "device.h"
-
-#define DALI_PROVIDER_ID 2
 
 #define DALI_RESPONSE_NAK -1
 #define DALI_RESPONSE_COLLISION -2
@@ -27,8 +23,6 @@ extern "C" {
 
 
 typedef struct {
-    provider_base_t super;
-
     uint32_t tx_pin;
     uint32_t rx_pin;
 
@@ -42,11 +36,12 @@ typedef struct {
     esp_timer_handle_t rxTimeoutTimer;
 
     TaskHandle_t transcieve_task;
-} dali_provider_t;
+} dali_driver_t;
 
+typedef void (*dali_command_callback_t)(int result, void *arg);
 
-ccpeed_err_t dali_provider_init(dali_provider_t *self, uint32_t tx, uint32_t rx);
-ccpeed_err_t dali_send_command(dali_provider_t *prov, uint16_t value, TickType_t ticksToWait) ;
+ccpeed_err_t dali_driver_init(dali_driver_t *driver, uint32_t tx, uint32_t rx);
+ccpeed_err_t dali_send_command(dali_driver_t *driver, uint16_t value, dali_command_callback_t cb, void *arg) ;
 
 
 #ifdef __cplusplus
