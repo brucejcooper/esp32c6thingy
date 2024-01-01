@@ -74,12 +74,13 @@ local function serve_device(req)
     if req.code == coap.CODE_GET then
         local addr = tonumber(req.path[#req.path])
         log.info("Getting level of device", addr)
-        -- The dali fetch needs to run in a co-routine, as it blocks
+        -- The dali fetch needs to run in a co-routine, as it blocks waiting on the driver
+        -- This means we will transmit two UDP packets - one with the initial ACK, and another with the content.
         system.start_coro(function()
             log.info("Started Coro to process DALI request")
             local level = dali:query_actual(addr)
             coap.reply(req, {
-                body=string.format("{ \"level\":%d }", level),
+                body={ level=level } -- This will be CBOR encoded
             })
         end)
         -- This handler will return nothing. It will acknowledge immediately with an EMPTY response, then send the real response from the co-routine

@@ -80,8 +80,7 @@ static int start_coro(lua_State *L) {
     // Start a co-routine with the function argument as the handler. 
     lua_getglobal(L, "coroutine");
     lua_getfield(L, -1, "create");
-    lua_pushnil(L);
-    lua_copy(L, 1, -1);
+    lua_pushvalue(L, 1);
     int r = lua_pcall(L, 1, 1, 0);
     if (r) {
         luaL_error(L, "Could not create coroutine");
@@ -110,7 +109,7 @@ static int start_coro(lua_State *L) {
     ESP_ERROR_CHECK(esp_timer_create(&args, &coro->timer));
     schedule_coro(coro);
 
-    ESP_LOGI(TAG, "Registered coroutine with id %d", coro->task_ref);
+    ESP_LOGD(TAG, "Registered coroutine with id %d", coro->task_ref);
     return 1;
 }
 

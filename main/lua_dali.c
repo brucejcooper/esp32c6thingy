@@ -10,14 +10,6 @@
 
 #define TAG "gpio"
 
-static void pushmethod(lua_State *L, char *methodName, lua_CFunction fn) {
-    lua_pushstring(L, methodName);
-    lua_pushcfunction(L, fn);
-    lua_settable(L, -3);
-
-}
-
-
 /**
  * Sends the supplied command to the dali device specified in the first argument.
  */
@@ -101,8 +93,7 @@ static int init_dali_driver(lua_State *L){
 
     // Set the metadata table for our new object to be the class self, so that we can access the other functions as methods.
     // copy the value
-    lua_pushnil(L); // This will be overwritten by the copy.
-    lua_copy(L, 1, -1);
+    lua_pushvalue(L, 1);
     lua_setmetatable(L, -2);
 
     ESP_LOGI(TAG, "After init, stack at %d, top is %d", lua_gettop(L), lua_type(L, -1));
@@ -129,8 +120,7 @@ int luaopen_dali(lua_State *L)
     // The class object is on the top of the stack.  We need to set its __index property to itself so that it can be used for method lookup
     // This is the equivalent of self.__index = self.
     lua_pushstring(L, "__index");
-    lua_pushnil(L); // Will be overwritten by copy
-    lua_copy(L, -3, -1);
+    lua_pushvalue(L, -2);
     lua_settable(L, -3);
 
     return 1;

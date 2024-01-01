@@ -14,6 +14,7 @@
 #include <lua/lauxlib.h>
 #include <lua/lualib.h>
 #include "ccpeed_err.h"
+#include "cbor_helpers.h"
 
 #define TAG "coap"
 
@@ -31,6 +32,9 @@ ccpeed_err_t coap_set_body(lua_State *L, int argIndex, otMessage *response) {
     size_t bodysz;
     otCoapCode response_code = OT_COAP_CODE_EMPTY;
     otError error = OT_ERROR_NONE;
+    uint8_t buf[2048];
+    CborEncoder enc;
+    CborError err;
 
     if (lua_istable(L, argIndex)) {
         lua_getfield(L, argIndex, "body");
@@ -42,6 +46,19 @@ ccpeed_err_t coap_set_body(lua_State *L, int argIndex, otMessage *response) {
                 break;
             case LUA_TTABLE:
                 // TODO auto-serialise the message using CBOR.
+                cbor_encoder_init(&enc, buf, sizeof(buf), 0);
+
+                err= lua_to_cbor(L, &enc);
+                if (err != CborNoError) {
+                    ESP_LOGE(TAG, "Error writing response to CBOR");
+                    response_code = OT_COAP_CODE_INTERNAL_ERROR;
+                } else {
+                    body = buf;
+                    bodysz = enc.data.ptr-buf;
+                    response_code = OT_COAP_CODE_CONTENT;
+                    ESP_LOGD(TAG, "Encoded to CBOR in %d bytes", bodysz);
+                    ESP_LOG_BUFFER_HEXDUMP(TAG, buf, bodysz, ESP_LOG_VERBOSE);
+                }
                 break;
             case LUA_TNIL:
                 ESP_LOGD(TAG, "Body is nil");
@@ -140,7 +157,7 @@ static void lua_push_options_from_coap(lua_State *L, otMessage *msg, uint16_t op
             lua_pushinteger(L, i++);
             assert(otCoapOptionIteratorGetOptionValue(&iter, buf) == OT_ERROR_NONE);
             lua_pushlstring(L, buf, opt->mLength);
-            ESP_LOGI(TAG, "Got option %d (len %d) \"%.*s\"", optId, opt->mLength, opt->mLength, (char *) buf);                    
+            ESP_LOGD(TAG, "Got option %d (len %d) \"%.*s\"", optId, opt->mLength, opt->mLength, (char *) buf);                    
             lua_settable(L, -3);
         }
         opt = otCoapOptionIteratorGetNextOptionMatching(&iter, optId);
@@ -241,30 +258,6 @@ static void coap_call_handler(void *aContext, otMessage *request_message, const 
     } else {
         coap_set_body(ctx->L, -1, response);
     }
-
-    // cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
-    // // TODO race condition. Lock it for the duration.
-    // cbor_encoder_create_map(&encoder, &deviceMapEncoder, device_count());
-    // for (device_t *dev = device_get_all(); dev != NULL; dev = (device_t *) dev->_llitem.next) {
-    //     // Key
-    //     sz2 = sizeof(buf2);
-    //     cerr = cbor_encode_deviceid(&dev->id, buf2, &sz2);
-    //     if (cerr != CborNoError) {
-    //         ESP_LOGE(TAG, "Error encoding deviceID: %d", cerr);
-    //         goto end;
-    //     }
-    //     cbor_encode_byte_string(&deviceMapEncoder, buf2, sz2);
-    //     // Value
-    //     cbor_encoder_create_array(&deviceMapEncoder, &deviceEncoder, 1);
-    //         // Only field - the array of aspects
-    //         cbor_encoder_create_array(&deviceEncoder, &aspectEncoder, dev->num_aspects);
-    //         for (int i = 0; i < dev->num_aspects; i++) {
-    //             cbor_encode_uint(&aspectEncoder, dev->aspects[i]);
-    //         }
-    //         cbor_encoder_close_container(&deviceEncoder, &aspectEncoder);
-    //     cbor_encoder_close_container(&deviceMapEncoder, &deviceEncoder);
-    // }
-    // cbor_encoder_close_container(&encoder, &deviceMapEncoder);
 
     if (isConfirmable) {
         ESP_LOGD(TAG, "Sending repsonse with code 0x%02x", otCoapMessageGetCode(response));
