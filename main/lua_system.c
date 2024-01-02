@@ -1,6 +1,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <driver/gpio.h>
 #include <esp_timer.h>
 #include <esp_log.h>
@@ -16,8 +17,6 @@
 #include "lua_coap.h"
 #include "lua_log.h"
 #include "lua_dali.h"
-
-
 
 #define TAG "lua_system"
 
@@ -38,12 +37,16 @@ typedef struct  {
     int task_ref;
     esp_timer_handle_t timer;
     int ret;
+    int firstArgRef;
 
     // If we're waiting for GPIO, this will be set to the pin that we are waiting on. Will be set to -1 if not waiting on a pin
     int gpio_waiting_pin;
     int gpio_expected_lvl;
 
     bool dali_cmd_active;
+
+    int resultHandlerRef;
+    int callbackArgRef;
 
 } coro_entry_t;
 
@@ -53,9 +56,39 @@ static int num_coros = 0;
 static coro_entry_t coros[MAX_COROS];
 
 static QueueHandle_t queue;
+static SemaphoreHandle_t mutex;
 
 
 static void timer_callback(void *arg);
+
+
+
+static const char *type_names[] = {
+    "nil",
+    "boolean",
+    "light_user_data",
+    "number",
+    "string",
+    "table",
+    "function",
+    "user_data",
+    "thread",
+};
+
+
+void lua_lock_mine() {
+    xSemaphoreTake(mutex, portMAX_DELAY);
+}
+
+void lua_unlock_mine() {
+    xSemaphoreGive(mutex);
+}
+
+
+
+const char *lua_type_str(lua_State *L, int idx) {
+    return type_names[lua_type(L, idx)];
+}
 
 
 static void schedule_coro(coro_entry_t *coro) {
@@ -67,16 +100,46 @@ static void schedule_coro(coro_entry_t *coro) {
 }
 
 
-static int start_coro(lua_State *L) {
+int start_coro(lua_State *L) {
+    ESP_LOGD(TAG, "Starting CORO");
+
     if (!lua_isfunction(L, 1)) {
         luaL_argerror(L, 1, "Expected a function");
         return 1;
     }
-    // Store the coroutine as a reference in the registry.
     if (num_coros >= MAX_COROS) {
         luaL_error(L, "Too many co-routines");
         return 1;
     }
+
+    int firstArgRef = LUA_NOREF;
+    if (lua_gettop(L) > 1) {
+        lua_pushvalue(L, 2);
+        firstArgRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+
+    int completionHandlerRef = LUA_NOREF;
+    if (lua_gettop(L) > 2) {
+        lua_pushvalue(L, 3);
+        completionHandlerRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+
+    int callbackArg = LUA_NOREF;
+    if (lua_gettop(L) > 3) {
+        lua_pushvalue(L, 4);
+        callbackArg = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+
+
+
+
+    // if (lua_gettop(L) > 1 && !lua_iscfunction(L, 2)) {
+    //     ESP_LOGE(TAG, "2nd argument is a %s", type_names[lua_type(L, 2)]);
+    //     luaL_argerror(L, 2, "Result handler must be a c function");
+    //     return 1;
+    // }
+
+    // Store the coroutine as a reference in the registry.
     // Start a co-routine with the function argument as the handler. 
     lua_getglobal(L, "coroutine");
     lua_getfield(L, -1, "create");
@@ -98,6 +161,9 @@ static int start_coro(lua_State *L) {
     coro->ret = 0;
     coro->gpio_waiting_pin = -1;
     coro->dali_cmd_active = false;
+    coro->firstArgRef = firstArgRef;
+    coro->resultHandlerRef = completionHandlerRef;
+    coro->callbackArgRef = callbackArg;
 
     // Each coro gets its own high res timer, whether it uses it or not. 
     esp_timer_create_args_t args = {
@@ -110,7 +176,7 @@ static int start_coro(lua_State *L) {
     schedule_coro(coro);
 
     ESP_LOGD(TAG, "Registered coroutine with id %d", coro->task_ref);
-    return 1;
+    return 0;
 }
 
 static int restart_system(lua_State *L) {
@@ -200,6 +266,9 @@ static void delete_coro(lua_State *L, coro_entry_t *coro) {
         gpio_set_intr_type(coro->gpio_waiting_pin, GPIO_INTR_DISABLE);
     }
     luaL_unref(L, LUA_REGISTRYINDEX, coro->task_ref);
+    luaL_unref(L, LUA_REGISTRYINDEX, coro->firstArgRef);
+    luaL_unref(L, LUA_REGISTRYINDEX, coro->resultHandlerRef);
+    luaL_unref(L, LUA_REGISTRYINDEX, coro->callbackArgRef);
     coro->dali_cmd_active = false;
 
     num_coros--;
@@ -226,18 +295,6 @@ bool get_int(lua_State *L, const char *fname, int *out, int default_value) {
 }
 
 
-static const char *type_names[] = {
-    "nil",
-    "boolean",
-    "light_user_data",
-    "number",
-    "string",
-    "table",
-    "function",
-    "user_data",
-    "thread",
-};
-
 
 void dumpStack(lua_State *L) {
     for (int i = lua_gettop(L); i > 0; i--) {
@@ -253,7 +310,22 @@ void dumpStack(lua_State *L) {
                 break;
         }
     }
+}
 
+
+typedef enum {
+    STATUS_DEAD,
+    STATUS_SUSPENDED,
+    STATUS_OTHER,
+} coro_status_t;
+
+coro_status_t map_status(const char *val) {
+    if (strcmp(val, "dead") == 0) {
+        return STATUS_DEAD;
+    } else if (strcmp(val, "suspended") == 0) {
+        return STATUS_SUSPENDED;
+    } else
+        return STATUS_OTHER;
 }
 
 
@@ -261,6 +333,7 @@ static void run_coro(lua_State *L, coro_entry_t *coro) {
     int delay, pin, level, dali_cmd;
 
     ESP_LOGD(TAG, "Running Coro %d - top is %d", coro->task_ref, lua_gettop(L));
+    lua_lock_mine();
 
     // Get global "coroutine"
     assert(lua_getglobal(L, "coroutine"));
@@ -269,12 +342,20 @@ static void run_coro(lua_State *L, coro_entry_t *coro) {
 
     // Run the method with two arguments (the coro and the ret value from the last event), expecting two responses (although the second one might be nil)
     assert(lua_rawgeti(L, LUA_REGISTRYINDEX, coro->task_ref));
-    lua_pushinteger(L, coro->ret);
+
+    if (coro->firstArgRef >= 0) {
+        // First call sends in the function argument.
+        assert(lua_rawgeti(L, LUA_REGISTRYINDEX, coro->firstArgRef));
+        luaL_unref(L, LUA_REGISTRYINDEX, coro->firstArgRef);
+        coro->firstArgRef = LUA_NOREF;
+    } else {
+        lua_pushinteger(L, coro->ret);
+    }
     int r = lua_pcall(L, 2, 2, 0);
     if (r) {
         lua_report_error(L, r, "Coroutine call failure");
     }
-    ESP_LOGD(TAG, "CORO %d returned %d %s", coro->task_ref, lua_toboolean(L, -2), type_names[lua_type(L, -1)]);
+    ESP_LOGD(TAG, "CORO %d returned %d %s", coro->task_ref, lua_toboolean(L, -2), lua_type_str(L, -1));
     // Get the response (which should have two responses - whether its finished and any arguments - in the event of an error this will be the second argument)
     bool still_running = false;
     if (!lua_isboolean(L, -2)) {
@@ -306,7 +387,6 @@ static void run_coro(lua_State *L, coro_entry_t *coro) {
             } else {
                 ESP_LOGE(TAG, "Invalid delay");
             }
-
             
             if (get_int(L, "dali", &dali_cmd, -1)) {
                 if (dali_cmd != -1) {
@@ -329,41 +409,58 @@ static void run_coro(lua_State *L, coro_entry_t *coro) {
         }
     } else {
         // If the second arg is a string, then an error has occurred. 
-        if (lua_isstring(L, -1)) {
+        // only log the error if there isn't a result handler.  Chances are that will log errors, so it would double up. 
+        if (lua_isstring(L, -1) && coro->resultHandlerRef < 0) {
             const char *msg = lua_tostring(L, -1);
             ESP_LOGE(TAG, "Error running co-routine %d: %s", coro->task_ref, msg);
 
         }    
     }
-    lua_pop(L, 2); // Dispose of the 2 responses
 
 
-    // the coroutine global is still present at the top of the stack. Use it to get the status of the co-routine.
-    lua_getfield(L, -1, "status");
-    assert(lua_rawgeti(L, LUA_REGISTRYINDEX, coro->task_ref)); // Parameter
+    // the coroutine global is still present at the bottom of the stack. Use it to get the status of the co-routine.
+    lua_getfield(L, 1, "status");
+    assert(lua_rawgeti(L, LUA_REGISTRYINDEX, coro->task_ref)); // Parameter (the coro)
     r = lua_pcall(L, 1, 1, 0);
     if (r) {
         lua_report_error(L, r, "Can not get coroutine status");
     } else {
-        const char *statusstr = lua_tostring(L, -1);
-        if (strcmp(statusstr, "dead") == 0) {
-            ESP_LOGI(TAG, "CORO %d has completed", coro->task_ref);
-            delete_coro(L, coro);
-        } else if (strcmp(statusstr, "suspended") == 0) {
-            ESP_LOGV(TAG, "CORO %d suspended", coro->task_ref);
-        } else {
-            ESP_LOGW(TAG, "CORO %d in unstable state %s", coro->task_ref, statusstr);
+        coro_status_t status = map_status(lua_tostring(L, -1));
+        lua_pop(L, 1); // The status response.
+        switch (status) {
+            case STATUS_DEAD:
+                if (coro->resultHandlerRef >= 0) {
+                    ESP_LOGD(TAG, "calling CORO %d result handler %d", coro->task_ref, coro->resultHandlerRef);
+                    lua_rawgeti(L, LUA_REGISTRYINDEX, coro->resultHandlerRef); // This will return the handler reference.
+                    lua_pushvalue(L, -3); // whether there was an error or not
+                    lua_pushvalue(L, -3); // The last result from the coroutine.
+                    lua_rawgeti(L, LUA_REGISTRYINDEX, coro->callbackArgRef);
+                    r = lua_pcall(L, 3, 0, 0);
+                    if (r) {
+                        lua_report_error(L, r, "Error calling result handler for CORO");
+                    }
+                } else {
+                    ESP_LOGD(TAG, "CORO %d has no post-result handler", coro->task_ref);
+                }
+                ESP_LOGI(TAG, "CORO %d has completed", coro->task_ref);
+                delete_coro(L, coro);
+                break;
+            case STATUS_SUSPENDED:
+                ESP_LOGV(TAG, "CORO %d suspended", coro->task_ref);
+                break;
+            default:
+                ESP_LOGW(TAG, "CORO %d in unstable state", coro->task_ref);
+                break;
         }
-        lua_pop(L, 1); // The response.
     }
-    lua_pop(L, 1); // The coroutine global
-
-
-    // When we get here, the stack should be back to zero
-    assert(lua_gettop(L) == 0); // TODO just nuke the stack for safety?
-
-
-
+   lua_pop(L, 3); // Dispose of the 2 responses and the coroutine global
+    // When we get here, the stack should be empty
+    if (lua_gettop(L) != 0) {
+        ESP_LOGE(TAG, "After Coro-running, stack should be empty");
+        dumpStack(L);
+        // TODO just nuke the stack for safety?
+    } 
+    lua_unlock_mine();
 }
 
 
@@ -449,7 +546,7 @@ esp_err_t init_lua() {
 
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
 
-
+    mutex = xSemaphoreCreateMutex();
     queue = xQueueCreate(10, sizeof(coro_entry_t *));
     if (!queue) {
         ESP_LOGE(TAG, "Could not create event loop run queue");

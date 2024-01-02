@@ -13,55 +13,29 @@
 /**
  * Sends the supplied command to the dali device specified in the first argument.
  */
-static int cmd(lua_State *L, uint16_t cmd) {
+static int transmit(lua_State *L) {
     // First arg is self
     if (!lua_istable(L, 1)) {
         luaL_argerror(L, 1, "Self should be a driver object");
     }
     // Second arg is the address to hit. 
-    int addr = luaL_checkinteger(L, 2);
-    if (addr >= 0 && addr <= 63) {
-        // Okay, we have a valid command.  Now we want to call yield with the right object.
-        lua_newtable(L);
-        lua_pushstring(L, "dali");
-        lua_pushinteger(L, DALI_GEAR_ADDR(addr) | cmd);
-        lua_settable(L, -3);
+    int cmd = luaL_checkinteger(L, 2);
 
-        // Copy the driver field out of the driver object into the arg table.
-        lua_pushstring(L, "driver");
-        lua_getfield(L, 1, "driver");
-        lua_settable(L, -3);
+    // Okay, we have a valid command.  Now we want to call yield with the right object.
+    lua_newtable(L);
+    lua_pushstring(L, "dali");
+    lua_pushinteger(L, cmd);
+    lua_settable(L, -3);
 
-        // Yield the result, which will instruct the event loop to run the command and return the result.
-        return lua_yield(L, 1);
-    } else {
-        luaL_argerror(L, 1, "Address must be an integer between 0 and 63 inclusive");
-        return 1;
-    }
+    // Copy the driver field out of the driver object into the arg table.
+    lua_pushstring(L, "driver");
+    lua_getfield(L, 1, "driver");
+    lua_settable(L, -3);
 
+    // Yield the result, which will instruct the event loop to run the command and return the result.
+    return lua_yield(L, 1);
 }
 
-
-/**
- * Helper function that calculates the 16 bit command to send when querying the actual level of a fixture. 
- */
-static int cmd_query_actual(lua_State *L) {
-    return cmd(L, DALI_CMD_QUERY_ACTUAL_LEVEL);
-}
-
-/**
- * Helper function that calculates the 16 bit command to send when querying the actual level of a fixture. 
- */
-static int cmd_goto_last_active(lua_State *L) {
-    return cmd(L, DALI_CMD_GOTO_LAST_ACTIVE_LEVEL);
-}
-
-/**
- * Helper function that calculates the 16 bit command to send when querying the actual level of a fixture. 
- */
-static int cmd_off(lua_State *L) {
-    return cmd(L, DALI_CMD_OFF);
-}
 
 
 
@@ -107,9 +81,7 @@ static int init_dali_driver(lua_State *L){
 
 static const struct luaL_Reg dali_funcs[] = {
     { "new", init_dali_driver },
-    { "query_actual", cmd_query_actual },
-    { "goto_last_active", cmd_goto_last_active }, 
-    { "off", cmd_off },
+    { "transmit", transmit },
     { NULL, NULL }
 };
 

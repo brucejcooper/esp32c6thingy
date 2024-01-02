@@ -1,9 +1,11 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <driver/gpio.h>
+
 #include <lua/lua.h>
 #include <lua/lauxlib.h>
 #include <lua/lualib.h>
+#include <freertos/semphr.h>
 #include <esp_log.h>
 #include <openthread/coap.h>
 #include <openthread/instance.h>
@@ -15,6 +17,7 @@
 #include <lua/lualib.h>
 #include "ccpeed_err.h"
 #include "cbor_helpers.h"
+#include "lua_system.h"
 
 #define TAG "coap"
 
@@ -24,67 +27,60 @@ typedef struct {
 } coap_resource_context_t;
 
 
+static const char *messageTypeStrings[] = {
+    "confirmable",
+    "non_confirmable",
+    "ack",
+    "reset",
+};
 
-
+static const char *RESPONSE_BODY_KEY = "response_body";
+static const char *RESPONSE_CODE_KEY = "response_code";
 
 ccpeed_err_t coap_set_body(lua_State *L, int argIndex, otMessage *response) {
     uint8_t *body = NULL;
     size_t bodysz;
-    otCoapCode response_code = OT_COAP_CODE_EMPTY;
     otError error = OT_ERROR_NONE;
     uint8_t buf[2048];
     CborEncoder enc;
     CborError err;
 
-    if (lua_istable(L, argIndex)) {
-        lua_getfield(L, argIndex, "body");
-        switch (lua_type(L, -1)) {
-            case LUA_TSTRING:
-                ESP_LOGD(TAG, "String body");
-                body = (uint8_t *) lua_tolstring(L, -1, &bodysz);
-                response_code = OT_COAP_CODE_CONTENT;
-                break;
-            case LUA_TTABLE:
-                // TODO auto-serialise the message using CBOR.
-                cbor_encoder_init(&enc, buf, sizeof(buf), 0);
 
-                err= lua_to_cbor(L, &enc);
-                if (err != CborNoError) {
-                    ESP_LOGE(TAG, "Error writing response to CBOR");
-                    response_code = OT_COAP_CODE_INTERNAL_ERROR;
-                } else {
-                    body = buf;
-                    bodysz = enc.data.ptr-buf;
-                    response_code = OT_COAP_CODE_CONTENT;
-                    ESP_LOGD(TAG, "Encoded to CBOR in %d bytes", bodysz);
-                    ESP_LOG_BUFFER_HEXDUMP(TAG, buf, bodysz, ESP_LOG_VERBOSE);
-                }
-                break;
-            case LUA_TNIL:
-                ESP_LOGD(TAG, "Body is nil");
-                break;
-            default:
-                ESP_LOGE(TAG, "Unknown repsonse body type %d", lua_type(L, -1));
-                break;
-        }
-        lua_pop(L, 1);
+    switch (lua_type(L, argIndex)) {
+        case LUA_TSTRING:
+            body = (uint8_t *) lua_tolstring(L, argIndex, &bodysz);
+            ESP_LOGD(TAG, "String body %.*s", bodysz, (char *) body);
+            otCoapMessageAppendContentFormatOption(response, OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN);
+            break;
+        case LUA_TTABLE:
+            ESP_LOGD(TAG, "Table body");
 
-        lua_getfield(L, argIndex, "code");
-        if (lua_isnumber(L, -1)) {
-            response_code = lua_tointeger(L, -1);
-        } else if (!lua_isnil(L, -1)) {
-            ESP_LOGE(TAG, "Code must be absent or a valid COAP code");
+            // TODO auto-serialise the message using CBOR.
+            cbor_encoder_init(&enc, buf, sizeof(buf), 0);
+            // Make a copy on the top of the stack. 
+            lua_pushvalue(L, argIndex);
+            err= lua_to_cbor(L, &enc);
+            if (err != CborNoError) {
+                ESP_LOGE(TAG, "Error writing response to CBOR");
+                return CCPEED_ERROR_INVALID;
+            } else {
+                body = buf;
+                bodysz = enc.data.ptr-buf;
+                ESP_LOGD(TAG, "Encoded to CBOR in %d bytes", bodysz);
+                ESP_LOG_BUFFER_HEXDUMP(TAG, buf, bodysz, ESP_LOG_VERBOSE);
+            }
+            lua_pop(L, 1);
+            otCoapMessageAppendContentFormatOption(response, OT_COAP_OPTION_CONTENT_FORMAT_CBOR);
+            break;
+        case LUA_TNIL:
+            ESP_LOGI(TAG, "Body is nil");
+            break;
+        default:
+            ESP_LOGE(TAG, "Unknown repsonse body type %d", lua_type(L, argIndex));
             return CCPEED_ERROR_INVALID;
-
-        }
-        lua_pop(L, 1);
-
-    } else if (!lua_isnil(L, argIndex)) {
-        ESP_LOGE(TAG, "Expected table response, or none");
-        return CCPEED_ERROR_INVALID;
+            break;
     }
 
-    otCoapMessageSetCode(response, response_code);
     if (body) {
         error = otCoapMessageSetPayloadMarker(response);
         if (error != OT_ERROR_NONE) {
@@ -112,8 +108,6 @@ int sendReply(lua_State *L) {
     size_t tokensz;
     const uint8_t *token = (const uint8_t *) lua_tolstring(L, -1, &tokensz);
 
-
-
     response = otCoapNewMessage(instance, NULL);
 	if (response == NULL) {
 		goto end;
@@ -123,7 +117,8 @@ int sendReply(lua_State *L) {
     // Copy the token across from the request
     otCoapMessageSetToken(response, token, tokensz);
 
-    coap_set_body(L, 2, response);
+    ccpeed_err_t cerr = coap_set_body(L, 2, response);
+    otCoapMessageSetCode(response, cerr == CCPEED_NO_ERR ? OT_COAP_CODE_CONTENT : OT_COAP_CODE_INTERNAL_ERROR);
     ESP_LOGD(TAG, "sending deferred response with status %d", otCoapMessageGetCode(response));
     error = otCoapSendResponse(instance, response, aMessageInfo);
     if (error != OT_ERROR_NONE) {
@@ -179,101 +174,185 @@ static int32_t extractIntOption(otMessage *msg, uint16_t optId) {
 }
 
 
+static bool is_field_set(lua_State *L, int index, const char *name) {
+    lua_getfield(L, index, name);
+    bool set = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    return set;
+
+}
+
+
+static int post_handler(lua_State *L) {
+    // Args are 
+    // 1. the status (boolean) - True if it worked, false if it errored.
+    // 2. the result (any)
+    // 3. the context (a message)
+    lua_getfield(L, 3, "_sem");
+    SemaphoreHandle_t sem = (SemaphoreHandle_t) lua_touserdata(L, -1);
+    lua_pop(L, 1 );
+
+    // Push the response body if one was returned
+    if (!lua_isnil(L, 2) || !is_field_set(L, 3, RESPONSE_BODY_KEY)) {
+        lua_pushstring(L, RESPONSE_BODY_KEY);
+        lua_pushvalue(L, 2);
+        lua_settable(L, 3);
+    }
+
+
+    // Set the respone code, if it hasn't already been set.
+    if (lua_toboolean(L, 1)) {
+        if (!is_field_set(L, 3, RESPONSE_CODE_KEY)) {
+            lua_pushstring(L, RESPONSE_CODE_KEY);
+            lua_pushinteger(L, OT_COAP_CODE_CONTENT);
+            lua_settable(L, 3);
+        }
+    } else {
+        // Errors are always represented as a 500.
+        lua_pushstring(L, RESPONSE_CODE_KEY);
+        lua_pushinteger(L, OT_COAP_CODE_INTERNAL_ERROR);
+        lua_settable(L, 3);
+    }
+
+    xSemaphoreGive(sem);
+    return 0;
+}
+
+
+
+
 /**
  * Called when a registered resource is called from COAP.
  */
 static void coap_call_handler(void *aContext, otMessage *request_message, const otMessageInfo *aMessageInfo) {
-    ESP_LOGD(TAG, "resource COAP handler called");
-    coap_resource_context_t *ctx = (coap_resource_context_t *) aContext;
     otMessage *response = NULL;
     otError error = OT_ERROR_NONE;
     otInstance *instance = esp_openthread_get_instance();
+    coap_resource_context_t *ctx = (coap_resource_context_t *) aContext;
+    lua_State *L = ctx->L;
+
+    ESP_LOGD(TAG, "resource COAP handler called");
+
+    lua_lock_mine();
+    
+    // Create a message object - We do it here first so that we'll still have it after the function call. 
+    lua_newtable(L);
+    lua_pushstring(L, "code");
+    lua_pushinteger(L, otCoapMessageGetCode(request_message));
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "message_id");
+    lua_pushinteger(L, otCoapMessageGetMessageId(request_message));
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "token");
+    lua_pushlstring(L, (char *) otCoapMessageGetToken(request_message), otCoapMessageGetTokenLength(request_message));
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "path");
+    lua_push_options_from_coap(L, request_message, OT_COAP_OPTION_URI_PATH);
+    lua_settable(L, -3);
+
+
+    lua_pushstring(L, "query");
+    lua_push_options_from_coap(L, request_message, OT_COAP_OPTION_URI_QUERY);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "observe");
+    lua_pushinteger(L, extractIntOption(request_message, OT_COAP_OPTION_OBSERVE));
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "type");
+    lua_pushstring(L, messageTypeStrings[otCoapMessageGetType(request_message)]);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "acknowledged");
+    lua_pushboolean(L, false);
+    lua_settable(L, -3);
+
+    // To be able to asynchronously reply, we need a semaphore
+    SemaphoreHandle_t sem = xSemaphoreCreateBinary();
+    lua_pushstring(L, "_sem");
+    lua_pushlightuserdata(L, sem);
+    lua_settable(L, -3);
+
 
 
     // get the function reference back onto the stack
     ESP_LOGD(TAG, "Calling coap handler id %d", ctx->fnRef);
-    assert(lua_rawgeti(ctx->L, LUA_REGISTRYINDEX, ctx->fnRef));
-
-    // Create an argument for the function. This will be a table version of the request_message
-    lua_newtable(ctx->L);
-    lua_pushstring(ctx->L, "code");
-    lua_pushinteger(ctx->L, otCoapMessageGetCode(request_message));
-    lua_settable(ctx->L, -3);
-
-    lua_pushstring(ctx->L, "message_id");
-    lua_pushinteger(ctx->L, otCoapMessageGetMessageId(request_message));
-    lua_settable(ctx->L, -3);
-
-    lua_pushstring(ctx->L, "token");
-    lua_pushlstring(ctx->L, (char *) otCoapMessageGetToken(request_message), otCoapMessageGetTokenLength(request_message));
-    lua_settable(ctx->L, -3);
-
-    lua_pushstring(ctx->L, "path");
-    lua_push_options_from_coap(ctx->L, request_message, OT_COAP_OPTION_URI_PATH);
-    lua_settable(ctx->L, -3);
-
-
-    lua_pushstring(ctx->L, "query");
-    lua_push_options_from_coap(ctx->L, request_message, OT_COAP_OPTION_URI_QUERY);
-    lua_settable(ctx->L, -3);
-
-    lua_pushstring(ctx->L, "observe");
-    lua_pushinteger(ctx->L, extractIntOption(request_message, OT_COAP_OPTION_OBSERVE));
-    lua_settable(ctx->L, -3);
-
-    // To be able to asynchronously reply, we need a msgInfo. Instead of meticulously coping it out, we just make a C copy.
-    lua_pushstring(ctx->L, "msgInfo");
-    otMessageInfo *msgInfoCopy = (otMessageInfo *) lua_newuserdata(ctx->L, sizeof(otMessageInfo));
-    memcpy(msgInfoCopy, aMessageInfo, sizeof(otMessageInfo));
-    lua_settable(ctx->L, -3);
-
-
-    response = otCoapNewMessage(instance, NULL);
-	if (response == NULL) {
-		goto end;
-	}
-
-    bool isConfirmable = otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE;
-    error = otCoapMessageInitResponse(response, request_message,  isConfirmable ? OT_COAP_TYPE_ACKNOWLEDGMENT : OT_COAP_TYPE_NON_CONFIRMABLE, OT_COAP_CODE_EMPTY);
-    if (error != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Error initialising response message");
-        goto end;
-    }
-
-    // Call the handler, expecting one response (it may be nil)
-    int r = lua_pcall(ctx->L, 1, 1, 0);
+    lua_pushcfunction(L, start_coro);              // call start_coro
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->fnRef); // Argument 1 - The function to call
+    lua_pushvalue(L, -3);                          // Argument 2 - The argument to send to the function when run for the first time. ref to the message object.
+    lua_pushcfunction(L, post_handler);            // Argument 3 - post-completion callback fn.
+    lua_pushvalue(L, -2);                          // Argument 4 - callback context - the message object
+    
+    int r = lua_pcall(L, 4, 0, 0);
     if (r) {
-        otCoapMessageSetCode(response, OT_COAP_CODE_INTERNAL_ERROR);
-        size_t errsz;
-        const char *errMsg = lua_tolstring(ctx->L, -1, &errsz);
-        error = otCoapMessageSetPayloadMarker(response);
-        if (error != OT_ERROR_NONE) {
-            goto end;
-        }
-        error = otMessageAppend(response, errMsg, errsz);
-        if (error != OT_ERROR_NONE) {
-            goto end;
-        }
-        lua_report_error(ctx->L, r, "COAP Hanlder failure");
+        lua_report_error(L, r, "Couldn't start handler co-routine");
     } else {
-        coap_set_body(ctx->L, -1, response);
-    }
+        // the message is on top of the stack. That is bad for confusing the coro-runner, so we stash it instead. 
+        int msgRef = luaL_ref(L, LUA_REGISTRYINDEX);
 
-    if (isConfirmable) {
-        ESP_LOGD(TAG, "Sending repsonse with code 0x%02x", otCoapMessageGetCode(response));
-	    error = otCoapSendResponse(instance, response, aMessageInfo);
-
-        if (error != OT_ERROR_NONE) {
-            ESP_LOGE(TAG, "Error sending response");
+        // openthread will destroy the message Context and request when this call completes.
+        // We don't want to do that, so we'll wait for the co-routine here. 
+        lua_unlock_mine();
+        if (xSemaphoreTake(sem, pdMS_TO_TICKS(1750)) == pdTRUE) {
+        } else {
+            // Timed out
+            ESP_LOGW(TAG, "Timed out!");
         }
-        return; // Skip the cleanup.
-    } else {
-        ESP_LOGI(TAG, "Not sending response, as it wasn't a confirmable request");
+        lua_lock_mine();
+
+
+        // Send a response message.
+        // Now get the message ref back
+        lua_rawgeti(L, LUA_REGISTRYINDEX, msgRef);
+        luaL_unref(L, LUA_REGISTRYINDEX, msgRef); // We don't need it any more.
+
+
+        lua_getfield(L, -1, "response_code");
+        int response_code = lua_tointeger(L, -1);
+        lua_pop(L, 1);
+
+
+        response = otCoapNewMessage(instance, NULL);
+        if (response == NULL) {
+            goto cleanup;
+        }
+
+        bool needsAck = otCoapMessageGetType(request_message) == OT_COAP_TYPE_CONFIRMABLE;
+        if (needsAck) {
+            error = otCoapMessageInitResponse(response, request_message,  OT_COAP_TYPE_ACKNOWLEDGMENT, response_code);
+        } else {
+            // We've already acknowledged the message, so we send a new independent message with the same token.
+            otCoapMessageInit(response,  OT_COAP_TYPE_NON_CONFIRMABLE, response_code);
+            error = otCoapMessageSetToken(response, otCoapMessageGetToken(request_message), otCoapMessageGetTokenLength(request_message));
+        }
+        if (error != OT_ERROR_NONE) {
+            ESP_LOGE(TAG, "Error initialising response message");
+            goto cleanup;
+        }
+
+        lua_getfield(L, -1, RESPONSE_BODY_KEY);
+        ESP_LOGD(TAG, "Body is a %s", lua_type_str(L, -1));
+        ccpeed_err_t cerr = coap_set_body(L, -1, response);
+        lua_pop(L, 1);
+
+        if (cerr != CCPEED_NO_ERR) {
+            ESP_LOGE(TAG, "Unable to encode response");
+            otCoapMessageSetCode(response, OT_COAP_CODE_INTERNAL_ERROR);
+        }
+        ESP_LOGD(TAG, "Sending Response");
+        error = otCoapSendResponse(instance, response, aMessageInfo);
+cleanup:
+        if (error != OT_ERROR_NONE && response != NULL) {
+            otMessageFree(response);
+        }
     }
-end:
-	if (error != OT_ERROR_NONE && response != NULL) {
-		otMessageFree(response);
-	}
+    vSemaphoreDelete(sem);
+    lua_pop(L, 1); // The message object.
+    lua_unlock_mine();
+    ESP_LOGD(TAG, "Completed handler");
 }
 
 
@@ -313,9 +392,27 @@ static int registerResource(lua_State *L){
 }
 
 
+static int sendAcknowledgement(lua_State *L) {
+    return 0;
+}
+
+static int sendReset(lua_State *L) {
+    return 0;
+}
+
+static int sendObservation(lua_State *L) {
+    return 0;
+}
+
+
+
+
 static const struct luaL_Reg coap_funcs[] = {
     { "resource", registerResource },
     { "reply", sendReply },
+    { "ack", sendAcknowledgement },
+    { "reset", sendReset },
+    { "send_observation", sendObservation },
     { NULL, NULL }
 };
 
