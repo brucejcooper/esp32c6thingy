@@ -68,7 +68,7 @@ function Dali:new(tx, rx)
     setmetatable(d, self)
     self.__index = self
 
-    system.start_coro(function()
+    system.start_task(function()
         d:scan()
     end)
     return d

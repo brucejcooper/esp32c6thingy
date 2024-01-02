@@ -26,7 +26,7 @@ function Button:new(initval)
     gpio.config_input(b.pin);
 
     -- Start a coroutine that will run forever processing the button state.
-    system.start_coro(function()
+    system.start_task(function()
         return b:wait_for_press()
     end)
     return b

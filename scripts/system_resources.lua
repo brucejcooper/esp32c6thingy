@@ -18,7 +18,7 @@ end)
 ---@param msg table The COAP message supplied by openthread
 coap.resource("restart", function(msg)
     if msg.code == coap.CODE_POST then
-        system.start_coro(function()
+        system.start_task(function()
             log.info("Restarting");
             system.await({ timeout = 250 }) -- Give openthread a chance to send the response before we reboot
             system.restart()
