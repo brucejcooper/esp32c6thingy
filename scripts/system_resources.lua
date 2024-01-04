@@ -11,14 +11,11 @@ end
 ---@param res any A table that will be used to house response parameters, if this function chooses to set them
 ---@return string|nil The One block of content from the file or nill if there was some sort of error - In which case res.code will have been set.
 local function handle_fs_read(req, res)
-    local block2 = req.block2
-    if block2 == nil then
-        block2 = {
-            id = 0,
-            size = 1024,
-            size_ex = 6
-        }
-    end
+    local block2 = req.block2 or {
+        id = 0,
+        size = 1024,
+        size_ex = 6
+    }
     log.debug("Block size is", block2.id, block2.size, block2.size_ex)
 
 
@@ -140,5 +137,6 @@ coap.set_coap_handler(function(req)
             return handler(req, req.res)
         end
     end
-    res.code = coap.CODE_NOT_FOUND
+    log.info("No path matches ", req.path_str)
+    req.res.code = coap.CODE_NOT_FOUND
 end)
