@@ -43,5 +43,8 @@ require("dali")
 --     on_long_press=dim_device
 -- }
 
-log.info("Starting DALI")
-Dali:new(4,5)
+-- log.info("Starting DALI")
+-- Dali:new(4,5)
+
+print("\n\n\n\nHello from LUA\n\n\n\n")
+log.info("LUA system script completed")

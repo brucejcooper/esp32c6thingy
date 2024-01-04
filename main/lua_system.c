@@ -373,7 +373,6 @@ static void run_coro(lua_State *L, lua_task_t *coro) {
         // make a copy then take a reference
         lua_pushvalue(L, -1);
         coro->arg_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        ESP_LOGI(TAG, "Created arg ref of %d", coro->arg_ref);
     } else {
         // Its a resume from an await callback - We will be returning to the co-routine with the value stored in ret
         assert(lua_getfield(L, -1, "resume"));
@@ -531,7 +530,8 @@ static void task_runner(void *aContext)
     luaL_openlibs(L);
     load_custom_libs(L);
 
-    int r = luaL_loadfile(L, "/lua/init.lua");
+    ESP_LOGI(TAG, "Running '/fs/init.lua' from filesystem");
+    int r = luaL_loadfile(L, "/fs/init.lua");
     if (r) {
         lua_report_error(L, r, "Parsing Error");
         running = false;
@@ -571,6 +571,7 @@ esp_err_t init_lua() {
         ESP_LOGE(TAG, "Could not create event loop run queue");
         return ESP_ERR_NO_MEM;
     }
+    ESP_LOGI(TAG, "Starting LUA task");
     xTaskCreate(task_runner, "lua", 10240, NULL, 5, NULL);
     return ESP_OK;
 }
