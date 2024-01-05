@@ -82,6 +82,8 @@ typedef struct {
 
     uint8_t response_buf[COAP_PACKET_SZ]; 
     uint8_t request_buf[COAP_PACKET_SZ];
+    uint8_t *response_payload_start;
+    size_t payload_len;
 } coap_response_t;
 
 
@@ -184,7 +186,7 @@ void coap_packet_init(coap_packet_t *pkt) {
     lstr_arr_init(&pkt->if_match, 0);
     lstr_arr_init(&pkt->if_none_match, 0);
     lstr_arr_init(&pkt->uri_query, 0);
-    pkt->payload.len = 0;
+    pkt->payload.len = -1;
     pkt->code = OT_COAP_CODE_EMPTY;
 }
 
@@ -227,10 +229,14 @@ bool parse_coap_packet(coap_packet_t *pkt, uint8_t *buf, size_t numRead) {
         return false;
     }
 
+    ESP_LOGD(TAG, "Parsing CoAP request");
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, buf, numRead, ESP_LOG_VERBOSE);
+
     // Parse the options.
     otCoapOptionType opt = 0;
     ssize_t remaining = numRead+buf-ptr;
     while (remaining > 0 && *ptr != 0xFF) {
+        ESP_LOGV(TAG, "Processing option starting with 0x%02x", *ptr);
         int delta = *ptr >> 4;
         int opt_len = *ptr & 0x0f;
         ptr++; 
@@ -254,6 +260,7 @@ bool parse_coap_packet(coap_packet_t *pkt, uint8_t *buf, size_t numRead) {
             return false;
         }
         opt += delta;
+        ESP_LOGV(TAG, "Opt Delta is %d, len = %d, opt = %d", delta, opt_len, opt);
 
         switch (opt) {
             case OT_COAP_OPTION_URI_PATH:
@@ -270,6 +277,7 @@ bool parse_coap_packet(coap_packet_t *pkt, uint8_t *buf, size_t numRead) {
                 uint32_t block2Val = parseIntOpt(ptr, opt_len);
                 pkt->block2_sz = block2Val & 0x07;
                 pkt->block2_id = block2Val >> 4;
+                ESP_LOGD(TAG, "REQ Block2 %d %d", pkt->block2_id, pkt->block2_sz);
                 break;
             case OT_COAP_OPTION_IF_MATCH:
                 lstr_arr_append(&pkt->if_match, (char *) ptr, opt_len);
@@ -283,13 +291,14 @@ bool parse_coap_packet(coap_packet_t *pkt, uint8_t *buf, size_t numRead) {
                 break;
             case OT_COAP_OPTION_BLOCK1:
                 if (opt_len < 1 || opt_len > 3) {
-                    ESP_LOGE(TAG, "Invalid Block2 length");
+                    ESP_LOGE(TAG, "Invalid Block1 length");
                     return false;
                 }
                 uint32_t block1Val = parseIntOpt(ptr, opt_len);
                 pkt->block1_sz = block1Val & 0x07;
                 pkt->block1_id = block1Val >> 4;
                 pkt->block1_more = block1Val & 0x08 ? true : false;
+                ESP_LOGD(TAG, "REQ Block1 %d %d %d", pkt->block1_id, pkt->block1_sz, pkt->block1_more);
                 break;
             case OT_COAP_OPTION_URI_HOST:
             case OT_COAP_OPTION_OBSERVE:
@@ -311,14 +320,24 @@ bool parse_coap_packet(coap_packet_t *pkt, uint8_t *buf, size_t numRead) {
         ptr += opt_len;
         remaining = numRead+buf-ptr;
     }
+    ESP_LOGV(TAG, "After parsing options, there is %d remaining", remaining);
     if (remaining > 0) {
-        ptr++;
+        if (*ptr != 0xFF) {
+            ESP_LOGE(TAG, "Expected payload marker");
+            return false;
+        }
+        ptr++; // Skip over the Payload marker byte
         remaining--;
+        pkt->payload.buf = (char *) ptr;
+        pkt->payload.len = remaining;
+        return true;
     } else if (remaining < 0) {
+        ESP_LOGE(TAG, "Parser error - overflow");
         return false;
     }
-    pkt->payload.buf = (char *) ptr;
-    pkt->payload.len = remaining;
+    // No payload
+    pkt->payload.buf = NULL;
+    pkt->payload.len = -1;
     return true;
 }
 
@@ -361,7 +380,7 @@ static inline bool coap_response_check_space_option(coap_response_t *i, size_t o
 
 
 
-static ccpeed_err_t coap_response_append_option(coap_response_t *i, const otCoapOptionType type, uint8_t *val, size_t val_len) {
+static ccpeed_err_t coap_response_append_option(coap_response_t *i, const otCoapOptionType type, const uint8_t *val, size_t val_len) {
     if (!coap_response_check_space_option(i, val_len)) {
         return CCPEED_ERROR_NOMEM;
     }
@@ -375,16 +394,16 @@ static ccpeed_err_t coap_response_append_option(coap_response_t *i, const otCoap
     size_t exDeltaSz, exValLenSz;
     *i->ptr++ = coap_opt_encode_len(bDiff, &exDelta, &exDeltaSz) << 4 | coap_opt_encode_len(val_len, &exLen, &exValLenSz);
     if (exDeltaSz == 2) {
-        *i->ptr++ = exDeltaSz >> 8;
+        *i->ptr++ = exDelta >> 8;
     }
-    if (exDeltaSz > 1) {
-        *i->ptr++ = exDeltaSz & 0xFF;
+    if (exDeltaSz >=1) {
+        *i->ptr++ = exDelta & 0xFF;
     }
     if (exValLenSz == 2) {
-        *i->ptr++ = exValLenSz >> 8;
+        *i->ptr++ = exLen >> 8;
     }
-    if (exValLenSz > 1) {
-        *i->ptr++ = exValLenSz & 0xFF;
+    if (exValLenSz >=1) {
+        *i->ptr++ = exLen & 0xFF;
     }
     memcpy(i->ptr, val, val_len);
     i->ptr += val_len;
@@ -398,15 +417,16 @@ static ccpeed_err_t coap_response_append_uint_option(coap_response_t *i, const o
     int numBytes = 0;
     *ptr = 0;
 
-    if (numBytes == 0) {
-        // This isn't strictly necessary, but depending on other functions not doing stuff is bad practice.
-        return coap_response_append_option(i, type, NULL, 0);
-    }
 
     while (val) {
         *ptr-- = val & 0xFF;
         val >>= 8;
         numBytes++;
+    }
+
+    if (numBytes == 0) {
+        // This isn't strictly necessary, but depending on other functions not doing stuff is bad practice.
+        return coap_response_append_option(i, type, NULL, 0);
     }
     return coap_response_append_option(i, type, ptr+1, numBytes);
 }
@@ -414,6 +434,7 @@ static ccpeed_err_t coap_response_append_uint_option(coap_response_t *i, const o
 
 static inline void coap_response_append_content_marker(coap_response_t *i) {
     *i->ptr++ = 0xFF;
+    i->response_payload_start = i->ptr;
     i->payload_started = true;
 }
 
@@ -514,39 +535,124 @@ void coap_prepare_handler_arg(lua_State *L, void *ctx) {
         lua_pushinteger(L, 1 << (4 + i->req.block2_sz));
         lua_settable(L, -3);
 
-        lua_pushstring(L, "size_ex");
-        lua_pushinteger(L, i->req.block2_sz);
+        lua_settable(L, -3);
+    }
+
+    if (i->req.block1_id >= 0) {
+        lua_pushstring(L, "block1");
+        lua_newtable(L);
+        lua_pushstring(L, "id");
+        lua_pushinteger(L, i->req.block1_id);
+        lua_settable(L, -3);
+
+        lua_pushstring(L, "size");
+        lua_pushinteger(L, 1 << (4 + i->req.block1_sz));
+        lua_settable(L, -3);
+
+        lua_pushstring(L, "more");
+        lua_pushboolean(L, i->req.block1_more);
         lua_settable(L, -3);
 
         lua_settable(L, -3);
     }
 
 
-    // The res field in the request is a response object, which can be used to set
-    // various fields that will be used to shape the CoAP response
-    lua_pushstring(L, "res");
-    lua_newtable(L);
-    lua_settable(L, -3);
 
-
-    // lua_pushstring(L, "query");
-    // lua_push_lstr_arr(L, &i->req.uri_query);
-    // lua_settable(L, -3);
-
-    // lua_pushstring(L, "observe");
-    // lua_pushinteger(L, extractIntOption(request_message, OT_COAP_OPTION_OBSERVE));
-    // lua_settable(L, -3);
-
-    // lua_pushstring(L, "type");
-    // lua_pushstring(L, messageTypeStrings[otCoapMessageGetType(request_message)]);
-    // lua_settable(L, -3);
-
-    lua_pushstring(L, "acknowledged");
-    lua_pushboolean(L, false);
-    lua_settable(L, -3);
+    if (i->req.payload.len >= 0) {
+        lua_pushstring(L, "payload");
+        lua_pushlstring(L, i->req.payload.buf, i->req.payload.len);
+        lua_settable(L, -3);
+    }
 }
 
 
+
+static int new_response(lua_State *L) {
+    // If they pass a table as the argument, use that as the response.  Otherwise, use the argument (which may be nil) as the payload
+    ESP_LOGV(TAG, "Making new response Object");
+    if (!lua_istable(L, 1)) {
+        lua_newtable(L);
+        lua_pushstring(L, "payload");
+        lua_pushvalue(L, 1); // Put the argument as the body.
+        lua_settable(L, -3);
+    }
+
+    // Set the coap global as the metatable.  This will be used as a marker to differentiate between a direct returned object and an explicit response
+    lua_getglobal(L, "coap");
+    lua_setmetatable(L, -2);
+
+    // That's pretty much it.  We just want an object in which we can put values that will be passed back, and we need a way to differentiate it.
+    return 1;
+}
+
+
+/**
+ * Creates a response object with the supplied code
+ */
+static int new_code_response(lua_State *L, otCoapCode code) {
+    // We create a new response object, using the argument as the constructor arguemnt;
+    lua_pushcfunction(L, new_response);
+    if (lua_gettop(L) == 1) {
+        // There was no argument
+        lua_pushnil(L);
+    } else {
+        lua_pushvalue(L, 1);
+    }
+    lua_call(L, 1, 1);
+    lua_pushstring(L, "code");
+    lua_pushinteger(L, code);
+    lua_settable(L, -3);
+    return 1;
+}
+
+
+int coap_block_opt(lua_State *L) {
+    int id = lua_tointeger(L, 1);
+    int size = lua_tointeger(L, 2);
+    bool more = lua_toboolean(L, 3);
+    int sizex;
+    if (size == 16) {
+        sizex = 0;
+    } else if (size == 32) {
+        sizex = 1;
+    } else if (size == 64) {
+        sizex = 2;
+    } else if (size == 128) {
+        sizex = 3;
+    } else if (size == 256) {
+        sizex = 4;
+    } else if (size == 512) {
+        sizex = 5;
+    } else if (size == 1024) {
+        sizex = 6;
+    } else {
+        luaL_argerror(L, 2, "Invalid size value");
+        return 1;
+    }
+    uint32_t val = id << 4 | sizex;
+    if (more) {
+        val |= 0x08;
+    }
+    lua_pushinteger(L, val);
+    return 1;
+}
+
+void log_response(coap_response_t *i) {
+    // Response is at index 2
+    // request is at index 3
+    char path_buf[1024];
+    char *ptr = path_buf;
+    *ptr = 0;
+
+    lstr_t *p = i->req.uri_path.items;
+    for (int n = i->req.uri_path.len; n > 0; n--, p++) {
+        *ptr++ = '/';
+        memcpy(ptr, p->buf, p->len);
+        ptr += p->len;
+    }
+    *ptr = 0;
+    ESP_LOGI("request", "%s %s %d - %d.%d %d", request_codes[i->req.code], path_buf, i->req.payload.len, i->response_buf[1] >> 5, i->response_buf[1] & 0x1F, i->payload_started ? i->payload_len : -1);
+}
 
 
 /**
@@ -567,41 +673,125 @@ void coap_handler_reply(lua_State *L, void *ctx) {
 
     ESP_LOGD(TAG, "Handler respone is %d %s %s", lua_toboolean(L, 1), lua_type_str(L, 2), lua_type_str(L, 2));
     
-    // Encode any errors or return values. 
+    // If arg 1 is false, then we encountered an unhandled error.
     if (!lua_toboolean(L, 1)) {
         errmsg = (char *) lua_tolstring(L, 2, &errmsglen);
         goto error;
     }
 
-    if (i->payload_started && !lua_isnil(L, 2)) {
-        // This is valid, but will be weird
-        ESP_LOGW(TAG, "co-routine sent content and also returned a value. Both will be concatenated");
-    }        
-    switch (lua_type(L, 2)) {
+    bool isFullResponseObject = false;
+    if (lua_istable(L, 2)) {
+        // A table is a full response object if it's metadata table is the global coap object
+        lua_getmetatable(L, 2);
+        lua_getglobal(L, "coap");
+        isFullResponseObject = lua_rawequal(L, -1, -2);
+        lua_pop(L, 2);
+    } else {
+        ESP_LOGD(TAG, "arg is already a responeobject");
+    }
+    if (!isFullResponseObject) {
+        ESP_LOGD(TAG, "Turning returned response into a full blown object");
+        // encapsulate the original return in a new return object, with the payload set to the original return value.
+        lua_newtable(L);
+        lua_pushstring(L, "payload");
+        lua_pushvalue(L, 2); // Put the return value in.
+        lua_settable(L, -3);
+        // Replace what was in arg 2 with the new object.
+        lua_replace(L, 2);
+    }
+
+    // Set the code on the response, if present
+    lua_getfield(L, 2, "code");
+    if (lua_isinteger(L, -1)) {
+        i->response_buf[1] = lua_tointeger(L, -1);
+        ESP_LOGD(TAG, "Setting response code to 0x%02x", i->response_buf[1]);
+    }
+    lua_pop(L, 1);
+
+    // Process options - remember they must be set in order
+    // |      4 | ETag             | [RFC7252] |
+    lua_getfield(L, 2, "etag");
+    if (lua_isstring(L, -1)) {
+        size_t sz;
+        const uint8_t *etag = (const uint8_t *) lua_tolstring(L, -1, &sz);
+        ESP_LOGD(TAG, "Setting e-tag to %.*s", sz, (char *) etag);
+        coap_response_append_option(i, OT_COAP_OPTION_E_TAG, etag, sz);
+    }
+    lua_pop(L, 1);
+
+    // |      8 | Location-Path    | [RFC7252] |
+
+    // |     12 | Content-Format   | [RFC7252] |
+    lua_getfield(L, 2, "format");
+    if (lua_isstring(L, -1)) {
+        const char *fmtS = lua_tostring(L, -1);
+        ESP_LOGD(TAG, "Setting format to %s", fmtS);
+        otCoapOptionContentFormat fmt = OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN;
+        if (strcmp(fmtS, "cbor") == 0) {
+            fmt = OT_COAP_OPTION_CONTENT_FORMAT_CBOR;
+        }
+        coap_response_append_uint_option(i, OT_COAP_OPTION_CONTENT_FORMAT, fmt);
+    }
+    lua_pop(L, 1);
+
+    // |     14 | Max-Age          | [RFC7252] |
+    // |     17 | Accept           | [RFC7252] |
+    // |     20 | Location-Query   | [RFC7252] |
+
+    // |    23 | Block2           | [RFC7959] |
+    lua_getfield(L, 2, "block2");
+    if (lua_isinteger(L, -1)) {
+        ESP_LOGD(TAG, "encoding block2 response 0x%02llx", lua_tointeger(L, -1));
+        if (coap_response_append_uint_option(i, OT_COAP_OPTION_BLOCK2, lua_tointeger(L, -1)) != CCPEED_NO_ERR) {
+            errmsg = "Could not set block2 option";
+            goto error;
+        }
+    }
+    lua_pop(L, 1);
+    
+    // |     27 | Block1           | [RFC7959] |
+    lua_getfield(L, 2, "block1");
+    if (lua_isinteger(L, -1)) {
+        ESP_LOGD(TAG, "Setting block1");
+        if (coap_response_append_uint_option(i, OT_COAP_OPTION_BLOCK1, lua_tointeger(L, -1)) != CCPEED_NO_ERR) {
+            errmsg = "could not set block1 option";
+            goto error;
+        }
+    }
+    lua_pop(L, 1);
+
+    // |     28 | Size2            | [RFC7959] |
+    // |     35 | Proxy-Uri        | [RFC7252] |
+    // |     39 | Proxy-Scheme     | [RFC7252] |
+    // |     60 | Size1            | [RFC7252] |
+
+    // Options are done.  Now its a matter of putting out the payload
+    lua_getfield(L, 2, "payload");
+    ESP_LOGD(TAG, "Setting payload");
+    switch (lua_type(L, -1)) {
         case LUA_TSTRING:
             // coap_response_try_set_content_format(i, OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN);
             size_t bodysz;
-            uint8_t *body = (uint8_t *) lua_tolstring(L, 2, &bodysz);
+            uint8_t *body = (uint8_t *) lua_tolstring(L, -1, &bodysz);
+            ESP_LOGD(TAG, "String body %d bytes", bodysz);
             cerr = coap_response_append(i, body, bodysz);
             if (cerr != CCPEED_NO_ERR) {
                 errmsg = "No space in buffer";
+                lua_pop(L, 1);
                 goto error;
             }
             break;
         case LUA_TTABLE:
             ESP_LOGD(TAG, "Table body");
-            if (coap_response_try_set_content_format(i, OT_COAP_OPTION_CONTENT_FORMAT_CBOR)) {
-                // We were able to append it, which means we now need a payload marker.
+            if (!i->payload_started) {
                 coap_response_append_content_marker(i);
             }
-
             // encode the table using CBOR directly into the output buffer.
             cbor_encoder_init(&enc, i->ptr, coap_response_space_remaining(i), 0);
-            // Make a copy of the value on the top of the stack, as lua_to_cbor only works on the top.
-            lua_pushvalue(L, 2);
             err= lua_to_cbor(L, &enc);
             if (err != CborNoError) {
                 errmsg = "Could not serialise table response to CBOR";
+                lua_pop(L, 1);
                 goto error;
             } else {
                 size_t serlen = enc.data.ptr-i->ptr;
@@ -610,13 +800,15 @@ void coap_handler_reply(lua_State *L, void *ctx) {
             lua_pop(L, 1);
             break;
         case LUA_TNIL:
+            ESP_LOGD(TAG, "NIL body");
             // Nothing to append.
             break;
         default:
-            ESP_LOGE(TAG, "Unknown repsonse body type %d", lua_type(L, 2));
-            errmsg = "Unknown coroutine response type";
+            errmsg = "Can not encode coroutine response type";
+            lua_pop(L, 1);
             goto error;
     }
+    lua_pop(L, 1);
     // If everything worked, jump over the error handling.
     goto reply;
 
@@ -631,11 +823,16 @@ error:
     coap_response_append(i, errmsg, errmsglen);
 
 reply:
+    i->payload_len = i->payload_started ? i->ptr - i->response_payload_start : 0;
     // Now send the response.
     otInstance *instance = esp_openthread_get_instance();
     otMessage *respMsg = otUdpNewMessage(instance, NULL);
     int bufLen = i->ptr - i->response_buf;
     otMessageAppend(respMsg, i->response_buf, bufLen);
+    ESP_LOGD(TAG, "Sending datagram response size %d", bufLen);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, i->response_buf, MIN(bufLen, 32), ESP_LOG_VERBOSE);
+
+    log_response(i);
     otError oErr = otUdpSendDatagram(instance, respMsg, &(i->msg_info));
     if (oErr != OT_ERROR_NONE) {
         ESP_LOGE(TAG, "could not send datagram");
@@ -669,15 +866,27 @@ void coapCallback(void *aContext, otMessage *aMessage, const otMessageInfo *aMes
 
     interaction->response_buf[0] = interaction->req.token.len | OT_COAP_TYPE_ACKNOWLEDGMENT << 4 | 0x40;
     // A default (successful) code is set depending on the request method
-    interaction->response_buf[1] = interaction->req.code == OT_COAP_CODE_GET ? OT_COAP_CODE_CONTENT : OT_COAP_CODE_CHANGED;
+    switch (interaction->req.code) {
+        case OT_COAP_CODE_PUT:
+        case OT_COAP_CODE_POST:
+            interaction->response_buf[1] = OT_COAP_CODE_CHANGED;
+            break;
+        case OT_COAP_CODE_DELETE:
+            interaction->response_buf[1] = OT_COAP_CODE_DELETED;
+            break;
+        default:
+        case OT_COAP_CODE_GET:
+            interaction->response_buf[1] = OT_COAP_CODE_CONTENT;
+            break;
+    }
+    // Copy messageId and token into the response buffer.
     interaction->response_buf[2] = interaction->req.message_id >> 8;
     interaction->response_buf[3] = interaction->req.message_id & 0xFF;
     memcpy(interaction->response_buf+4, interaction->req.token.buf, interaction->req.token.len);
     coap_response_reset_response(interaction);
 
 
-    // The respone is now in a state where it can be processed and a response sent.  Schedule a lua coro to do the work.
-
+    // The respone buffer is now in a state where it can be processed and a response sent.  Schedule a lua coro to do the work.
     if (coapHandlerFuncitonRef > 0) {
         lua_create_task(coapHandlerFuncitonRef, interaction, coap_prepare_handler_arg, coap_handler_reply);
     } else {
@@ -700,13 +909,70 @@ static int set_coap_handler(lua_State *L) {
 }
 
 
+#define ERR_FUNC(C) static int new_##C##_response(lua_State *L) { return new_code_response(L, OT_COAP_CODE_##C); }
 
+ERR_FUNC(CREATED);
+ERR_FUNC(DELETED);
+ERR_FUNC(VALID);
+ERR_FUNC(CHANGED);
+ERR_FUNC(CONTENT);
+ERR_FUNC(CONTINUE);
 
+ERR_FUNC(BAD_REQUEST);
+ERR_FUNC(UNAUTHORIZED);
+ERR_FUNC(BAD_OPTION);
+ERR_FUNC(FORBIDDEN);
+ERR_FUNC(NOT_FOUND);
+ERR_FUNC(METHOD_NOT_ALLOWED);
+ERR_FUNC(NOT_ACCEPTABLE);
+ERR_FUNC(REQUEST_INCOMPLETE);
+ERR_FUNC(PRECONDITION_FAILED);
+ERR_FUNC(REQUEST_TOO_LARGE);
+ERR_FUNC(UNSUPPORTED_FORMAT);
+
+ERR_FUNC(INTERNAL_ERROR);
+ERR_FUNC(NOT_IMPLEMENTED);
+ERR_FUNC(BAD_GATEWAY);
+ERR_FUNC(SERVICE_UNAVAILABLE);
+ERR_FUNC(GATEWAY_TIMEOUT);
+ERR_FUNC(PROXY_NOT_SUPPORTED);
 
 
 static const struct luaL_Reg coap_funcs[] = {
     // { "resource", registerResource },
     { "set_coap_handler", set_coap_handler },
+    { "response", new_response },
+
+    // Convenience functions for creating responses with a certain code. 
+    { "created", new_CREATED_response },
+    { "deleted", new_DELETED_response },
+    { "valid", new_VALID_response },
+    { "changed", new_CHANGED_response },
+    { "content", new_CONTENT_response },
+    { "continue", new_CONTINUE_response },
+
+    { "bad_request", new_BAD_REQUEST_response },
+    { "unauthorized", new_UNAUTHORIZED_response },
+    { "bad_option", new_BAD_OPTION_response },
+    { "forbidden", new_FORBIDDEN_response },
+    { "not_found", new_NOT_FOUND_response },
+    { "method_not_allowed", new_METHOD_NOT_ALLOWED_response },
+    { "not_accpetable", new_NOT_ACCEPTABLE_response },
+    { "request_incomplete", new_REQUEST_INCOMPLETE_response },
+    { "precondition_failed", new_PRECONDITION_FAILED_response },
+    { "request_too_large", new_REQUEST_TOO_LARGE_response },
+    { "unsupported_format", new_UNSUPPORTED_FORMAT_response },
+
+    { "internal_error", new_INTERNAL_ERROR_response },
+    { "not_implemented", new_NOT_IMPLEMENTED_response },
+    { "bad_gateway", new_BAD_GATEWAY_response },
+    { "service_unavailable", new_SERVICE_UNAVAILABLE_response },
+    { "gateway_timeout", new_GATEWAY_TIMEOUT_response },
+    { "proxy_not_supported", new_PROXY_NOT_SUPPORTED_response },
+
+
+    // Block option value
+    { "block_opt", coap_block_opt},
     { NULL, NULL }
 };
 

@@ -1,5 +1,6 @@
 require("button")
-require("system_resources")
+require("router")
+require("file_server")
 require("dali")
 
 
@@ -45,6 +46,4 @@ require("dali")
 
 -- log.info("Starting DALI")
 -- Dali:new(4,5)
-
-print("\n\n\n\nHello from LUA\n\n\n\n")
 log.info("LUA system script completed")
