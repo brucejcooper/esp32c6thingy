@@ -17,8 +17,7 @@
 #include <lua/lauxlib.h>
 #include <lua/lualib.h>
 #include "ccpeed_err.h"
-#include "cbor_helpers.h"
-#include "lua_system.h"
+#include "lua_cbor.h"
 
 #define TAG "coap"
 
@@ -664,8 +663,6 @@ void log_response(coap_response_t *i) {
  */
 void coap_handler_reply(lua_State *L, void *ctx) {
     coap_response_t *i = (coap_response_t *) ctx;
-    CborEncoder enc;
-    CborError err;
     ccpeed_err_t cerr;
 
     char *errmsg = NULL;
@@ -781,24 +778,6 @@ void coap_handler_reply(lua_State *L, void *ctx) {
                 goto error;
             }
             break;
-        case LUA_TTABLE:
-            ESP_LOGD(TAG, "Table body");
-            if (!i->payload_started) {
-                coap_response_append_content_marker(i);
-            }
-            // encode the table using CBOR directly into the output buffer.
-            cbor_encoder_init(&enc, i->ptr, coap_response_space_remaining(i), 0);
-            err= lua_to_cbor(L, &enc);
-            if (err != CborNoError) {
-                errmsg = "Could not serialise table response to CBOR";
-                lua_pop(L, 1);
-                goto error;
-            } else {
-                size_t serlen = enc.data.ptr-i->ptr;
-                i->ptr += serlen;
-            }
-            lua_pop(L, 1);
-            break;
         case LUA_TNIL:
             ESP_LOGD(TAG, "NIL body");
             // Nothing to append.
@@ -908,6 +887,28 @@ static int set_coap_handler(lua_State *L) {
     return 0;
 }
 
+static int cbor_response(lua_State *L) {
+    int nArgs = lua_gettop(L);
+    lua_pushcfunction(L, new_response);
+    lua_newtable(L);
+    lua_pushstring(L, "cbor");
+    lua_setfield(L, -2, "format");
+
+
+    // Encode the payload
+    lua_pushcfunction(L, lua_cbor_encode);
+    // pass through args that we were called with to the encode function.
+    for (int i = 1; i <= nArgs; i++) {
+        lua_pushvalue(L, i);
+    }
+    lua_call(L, nArgs, 1);
+
+    lua_setfield(L, -2, "payload");
+
+    lua_call(L, 1, 1); // call new_response
+    return 1;
+}
+
 
 #define ERR_FUNC(C) static int new_##C##_response(lua_State *L) { return new_code_response(L, OT_COAP_CODE_##C); }
 
@@ -942,6 +943,7 @@ static const struct luaL_Reg coap_funcs[] = {
     // { "resource", registerResource },
     { "set_coap_handler", set_coap_handler },
     { "response", new_response },
+    { "cbor_response", cbor_response },
 
     // Convenience functions for creating responses with a certain code. 
     { "created", new_CREATED_response },

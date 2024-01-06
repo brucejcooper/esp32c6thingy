@@ -8,7 +8,6 @@
 #include "freertos/queue.h"
 #include "freertos/event_groups.h"
 #include <string.h>
-#include "cbor_helpers.h"
 
 #include "esp_log.h"
 

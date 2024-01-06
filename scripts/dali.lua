@@ -2,6 +2,8 @@
 
 Dali = {}
 
+local log = Logger:new("dali")
+
 ---transforms a logical gear address into the value transmitted for DALI commands.
 ---@param logical_address integer between 0 and 63 inclusive indicating the logical address of the gear.
 ---@return integer the value once shifted
@@ -48,12 +50,12 @@ function Dali:serve_device(msg)
     
     if msg.code == coap.CODE_GET then
         local level = self:query_actual(physical_addr)
-        log.info("level of device", logical_addr, "is", level)
+        log:info("level of device", logical_addr, "is", level)
         return {
             level=level -- This will be CBOR encoded
         }
     elseif msg.code == coap.CODE_PUT then
-        log.info("Posted to device", logical_addr);
+        log:info("Posted to device", logical_addr);
         self:toggle(physical_addr);
     else
         msg.response_code = coap.CODE_METHOD_NOT_ALLOWED
@@ -62,7 +64,7 @@ end
 
 
 function Dali:register_device(addr)
-    log.info("Address", addr)
+    log:info("Address", addr)
     coap.resource(string.format("dali/%d", addr), function(msg)
         return self:serve_device(msg)
     end)
@@ -70,7 +72,7 @@ end
 
 
 function Dali:scan() 
-    log.info("Doing initial scan of Dali devices")
+    log:info("Doing initial scan of Dali devices")
     for addr=0,63 do
         local res = self:query_actual(addr)
         if res >= 0 then

@@ -17,6 +17,9 @@
 #include "lua_coap.h"
 #include "lua_log.h"
 #include "lua_dali.h"
+#include "lua_digest.h"
+#include "lua_cbor.h"
+#include <dirent.h>
 
 #define TAG "lua_system"
 
@@ -493,8 +496,47 @@ static void run_coro(lua_State *L, lua_task_t *coro) {
 }
 
 
+static int io_readdir(lua_State *L) {
+    const char *dirname = luaL_checkstring(L, 1);
+    if (!dirname) {
+        luaL_argerror(L, 1, "Expected a directory argument");
+    }
+
+    DIR* dir = opendir(dirname);
+    if (dir == NULL) {
+        luaL_error(L, "Could not open directory %s", dirname);
+    }
+
+    lua_newtable(L);
+    int idx = 1;
+    struct dirent *de;
+    while ((de = readdir(dir))) {
+        lua_pushinteger(L, idx++);
+        lua_pushstring(L, de->d_name);
+        lua_settable(L, -3);
+    }
+    closedir(dir);
+    return 1;
+
+}
+
+
+static int lua_patch_io(lua_State *L) {
+    lua_getglobal(L, "io");
+
+    lua_pushstring(L, "readdir");
+    lua_pushcfunction(L, io_readdir);
+    lua_settable(L, -3);
+
+    lua_pop(L, 1);
+
+    return 1;
+}
+
+
 int luaopen_system(lua_State *L) {
     luaL_newlib(L, eventloop_funcs);
+    lua_patch_io(L);
     return 1;
 }
 
@@ -506,9 +548,13 @@ static void load_custom_libs(lua_State *L) {
     lua_pop(L, 1);
     luaL_requiref(L, "coap", luaopen_coap, true);
     lua_pop(L, 1);
-    luaL_requiref(L, "log", luaopen_log, true);
+    luaL_requiref(L, "Logger", luaopen_logger, true);
     lua_pop(L, 1);
     luaL_requiref(L, "DaliBus", luaopen_dali, true);
+    lua_pop(L, 1);
+    luaL_requiref(L, "digest", luaopen_digest, true);
+    lua_pop(L, 1);
+    luaL_requiref(L, "cbor", luaopen_cbor, true);
     lua_pop(L, 1);
 }
 

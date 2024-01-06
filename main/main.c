@@ -20,7 +20,6 @@
 #include <driver/uart.h>
 
 #include <cbor.h>
-#include "cbor_helpers.h"
 #include "openthread/cli.h"
 #include "openthread/instance.h"
 #include "esp_openthread.h"

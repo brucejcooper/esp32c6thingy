@@ -1,15 +1,18 @@
-require("button")
+local log = Logger:new("lua_init")
+
+-- require("button")
 require("router")
 require("file_server")
 require("dali")
 
 
+
 -- local function toggle_device(b)
---     log.info("Button toggled", b.pin)
+--     log:info("Button toggled", b.pin)
 -- end
 
 -- local function dim_device(b)
---     log.info("Button dimmed", b.pin)
+--     log:info("Button dimmed", b.pin)
 -- end
 
 -- This device has 5 buttons
@@ -44,6 +47,6 @@ require("dali")
 --     on_long_press=dim_device
 -- }
 
--- log.info("Starting DALI")
+-- log:info("Starting DALI")
 -- Dali:new(4,5)
-log.info("LUA system script completed")
+log:info("LUA system script completed")

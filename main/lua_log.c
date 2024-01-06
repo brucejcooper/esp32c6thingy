@@ -6,6 +6,7 @@
 #include <lua/lualib.h>
 #include <esp_log.h>
 #include <string.h>
+#include "lua_system.h"
 
 static const char *TAG = "lua";
 
@@ -20,14 +21,22 @@ static inline int copy_string(char *buf, char *val, int remain) {
 }
 
 static int do_log(lua_State *L, int log_level) {   
-    if ( LOG_LOCAL_LEVEL >= log_level ) {
+    // First arg is self (or at least it should be)
+    if (!lua_istable(L, 1)) {
+        luaL_argerror(L, 1, "Expected logger to be passed as first argument");
+        return 1;
+    }
+    assert(lua_getfield(L, 1, "name"));
+    const char *tag = lua_tostring(L, -1);
+
+    if (log_level >= esp_log_level_get(tag)) {
         char buf[1024];
         char *bufptr = buf;
         int remain = sizeof(buf);
 
 
         int nargs = lua_gettop(L);
-        for (int arg = 1; arg <= nargs; arg++) {
+        for (int arg = 1; arg < nargs; arg++) { // Skip the last one, cos that's the level
             if (arg != 1) {
                 *bufptr++ = '\t';
                 remain--;
@@ -74,7 +83,7 @@ static int do_log(lua_State *L, int log_level) {
         // Trailing 0
         *bufptr = 0;
 
-        ESP_LOG_LEVEL_LOCAL(log_level, TAG, "%s", buf);
+        ESP_LOG_LEVEL_LOCAL(log_level, tag, "%s", buf);
     }
     return 0;
 
@@ -100,7 +109,28 @@ static int log_error(lua_State *L){
     return do_log(L, ESP_LOG_ERROR);
 }
 
+static int log_new(lua_State *L){
+    if (!lua_istable(L, 1)) {
+        luaL_argerror(L, 1, "Expected this to be called as a constructor.");
+    }
+    if (!lua_isstring(L, 2)) {
+        luaL_argerror(L, 2, "Expected name of logger");
+    }
+    
+    lua_newtable(L);
+    lua_pushstring(L, "name");
+    lua_pushvalue(L, 2);
+    lua_settable(L, -3);
+
+    lua_pushvalue(L, 1);
+    lua_setmetatable(L, -2);
+
+    return 1;
+}
+
+
 static const struct luaL_Reg log_funcs[] = {
+    { "new", log_new },
     { "trace", log_trace },
     { "debug", log_debug },
     { "info", log_info },
@@ -109,9 +139,15 @@ static const struct luaL_Reg log_funcs[] = {
     { NULL, NULL }
 };
 
-int luaopen_log(lua_State *L)
+int luaopen_logger(lua_State *L)
 {
     luaL_newlib(L, log_funcs);
+
+    // As logger will be used as a class metadata object, set its __index field. 
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, -2);
+    lua_settable(L,-3);
+
 
     return 1;
 }

@@ -4,6 +4,6 @@
 #include <lua/lua.h>
 #include <lua/lauxlib.h>
 
-int luaopen_log(lua_State *L);
+int luaopen_logger(lua_State *L);
 
 #endif /* MAIN_GPIO_H_ */

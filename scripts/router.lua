@@ -1,14 +1,17 @@
+local log = Logger:new("router")
+
+
 local function restart_handler()
     -- We run the restart in a separate task after a small delay so that the coroutine can return
     system.start_task(function()
-        log.warn("COAP request to restart");
+        log:warn("COAP request to restart");
         system.await({ timeout = 250 })
         system.restart()
     end)
 end
 
 local function info_handler()
-    return {
+    return coap.cbor_response{
         ver="dev",
         uptime=os.clock()
     }
@@ -17,7 +20,7 @@ end
 ---Lists all the resource paths that this device has registered
 ---@return table
 local function list_resources_handler()
-    local resourceList = {}
+    local resourceList = cbor.encode_as_list{}
     for path, _val in pairs(coap.resources) do
         table.insert(resourceList, path)
     end
@@ -26,7 +29,7 @@ local function list_resources_handler()
     for path, _val in pairs(coap.pattern_resources) do
         table.insert(resourceList, path)
     end
-    return resourceList
+    return coap.cbor_response(resourceList)
 end
 
 
@@ -47,7 +50,7 @@ coap.pattern_resources = { }
 
 
 function coap.lookup(path)
-    log.debug("looking for handler for path", path)
+    log:debug("looking for handler for path", path)
     local e = coap.resources[path]
     if e then
         return e
@@ -92,6 +95,6 @@ coap.set_coap_handler(function(req)
             return handler(req)
         end
     end
-    log.warn("No path matches", req.path_str)
+    log:warn("No path matches", req.path_str)
     return coap.not_found()
 end)

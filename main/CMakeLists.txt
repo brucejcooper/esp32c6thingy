@@ -6,8 +6,9 @@ idf_component_register(SRCS
                     "lua_dali.c"
                     "lua_log.c"
                     "lua_gpio.c"
+                    "lua_digest.c"
+                    "lua_cbor.c"
                     "dali_rmt_encoder.c" 
-                    "cbor_helpers.c"
                     INCLUDE_DIRS "."
                     EMBED_TXTFILES certs/coap_ca.pem certs/coap_server.crt certs/coap_server.key)
 

@@ -1,5 +1,8 @@
 require "router"
 
+local log = Logger:new("router")
+
+
 --- Calculates the file size of an open file_pointer
 --- Really, LUA should offer this up already, but we solve it by using seek. 
 local function file_size(fp)
@@ -16,24 +19,24 @@ local function handle_fs_read(req)
         id = 0,
         size = 1024,
     }
-    log.info("Fetching", req.path_str, "block", block2.id, "@", block2.size)
+    log:info("Fetching", req.path_str, "block", block2.id, "@", block2.size)
 
     local f = io.open("/"..req.path_str, "rb")
     if f then
         local sz = file_size(f)
-        -- log.debug("File size is", sz)
+        -- log:debug("File size is", sz)
         local num_blocks = math.ceil(sz/block2.size)
 
         if block2.id > num_blocks then
-            log.debug("attempt to fetch block beyond end of file")
+            log:debug("attempt to fetch block beyond end of file")
             return coap.bad_option("BlockID2 index beyond block count of file")
         end
 
         local offset = block2.id * block2.size
         f:seek("set", offset)
-        -- log.debug("Reading", block2.size, "from", offset)
+        -- log:debug("Reading", block2.size, "from", offset)
         local d = f:read(block2.size)
-        -- log.debug("Read", string.len(d))
+        -- log:debug("Read", string.len(d))
         f:close()
         return coap.response{
             payload= d,
@@ -51,7 +54,7 @@ local function handle_fs_write(req)
         size = 1024,
         more = false
     }
-    log.info("Writing file", req.path_str, "Block", block1.id, block1.size, block1.more, #req.payload)
+    log:info("Writing file", req.path_str, "Block", block1.id, block1.size, block1.more, #req.payload)
     local mode
     if block1.id == 0 then
         mode = "wb"
@@ -67,9 +70,9 @@ local function handle_fs_write(req)
     
     if pos > expectedPos then
         -- This is probably caused by a re-transmission of a previous request - Accept it with equinmity.
-        log.warn("Ignoring re-transmitted block")
+        log:warn("Ignoring re-transmitted block")
     elseif pos > expectedPos then
-        log.warn("Expected file to be", expectedPos, "but it was at", pos)
+        log:warn("Expected file to be", expectedPos, "but it was at", pos)
         fp:close()
         return coap.not_accpetable("Block has already been written")
     else
@@ -95,10 +98,36 @@ end
 
 
 local function handle_list(req)
-    local fname = "/"..req.path_str
-    log.info("Listing directory", fname);
+    local dirname = "/"..req.path_str
+    log:info("Listing directory", dirname);
 
-    return {}
+    local file_list = {}
+    -- Values in the table are binary strings, not utf8 - we have to give the encoder a hint
+    setmetatable(file_list, { __valenc= "bstr" })
+
+    local filenames = io.readdir(dirname)
+    -- we sort them so that we can paginate
+    table.sort(filenames)
+
+    local nextval = nil
+
+    for i,fname in ipairs(filenames) do
+        local fullname = dirname.."/"..fname
+        local fp = io.open(fullname, "rb")
+        if fp == nil then
+            error("Could not open file "..fullname)
+        end
+        local hasher = digest:md5()
+        hasher:update(fp:read("a"))
+        local digest = hasher:digest()
+        file_list[fname] = digest
+        fp:close()
+    end
+
+    return coap.cbor_response{
+        files=file_list,
+        next=nextval
+    }
 end
 
 coap.resources["fs"]={
