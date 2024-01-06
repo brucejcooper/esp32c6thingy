@@ -1,11 +1,11 @@
-local log = Logger:new("lua_init")
-
 -- require("button")
 require("router")
 require("file_server")
 require("dali")
 
+local log = Logger:new("main")
 
+log:info("done");
 
 -- local function toggle_device(b)
 --     log:info("Button toggled", b.pin)
@@ -49,4 +49,3 @@ require("dali")
 
 -- log:info("Starting DALI")
 -- Dali:new(4,5)
-log:info("LUA system script completed")

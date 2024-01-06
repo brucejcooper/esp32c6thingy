@@ -3,12 +3,47 @@ require "router"
 local log = Logger:new("router")
 
 
+---The maximum number of file items that will be returned in any one call to handle_list
+--- In other words, its the page size. 
+local MAX_LIST_ENTRIES = 20
+
+
 --- Calculates the file size of an open file_pointer
 --- Really, LUA should offer this up already, but we solve it by using seek. 
 local function file_size(fp)
     local pos = fp:seek("end", 0)
     return pos
 end
+
+local function get_file_etag(fname)
+    local fp = io.open(fname, "rb")
+    if not fp then
+        error("File %s does not exist", fname)
+    end
+    local hasher = digest:md5()
+
+    local block = fp:read(4096)
+    while block do
+        hasher:update(block)
+        block = fp:read(4096)
+    end
+    fp:close()
+    return hasher:digest()
+end
+
+---Checks to see if a table contains an item
+---@param table any
+---@param value any
+---@return boolean
+local function tableContains(table, value)
+    for i,v in ipairs(table) do
+      if (v == value) then
+        return true
+      end
+    end
+    return false
+end
+  
 
 
 ---Does a block wise fetch of a file from the filesystem
@@ -20,8 +55,19 @@ local function handle_fs_read(req)
         size = 1024,
     }
     log:info("Fetching", req.path_str, "block", block2.id, "@", block2.size)
+    local path = "/"..req.path_str
 
-    local f = io.open("/"..req.path_str, "rb")
+    -- Allow for etag matching
+    if req.if_match then
+        local etag = get_file_etag(path)
+        if not tableContains(req.if_match, etag) then
+            -- The etag does not match any of the values supplied
+            log:debug("Etag does not match supplied if-match - returning 'valid' response")
+            return coap.valid()
+        end
+    end
+
+    local f = io.open(path, "rb")
     if f then
         local sz = file_size(f)
         -- log:debug("File size is", sz)
@@ -55,13 +101,29 @@ local function handle_fs_write(req)
         more = false
     }
     log:info("Writing file", req.path_str, "Block", block1.id, block1.size, block1.more, #req.payload)
+
+    local path = "/"..req.path_str
+    if req.if_none_match and io.exists(path) then
+        log:debug("File exists, but if-none-match was specified")
+        return coap.precondition_failed()
+    end
+
+    if req.if_match then
+        local etag = get_file_etag(path)
+        if not tableContains(req.if_match, etag) then
+            -- The etag does not match any of the values supplied
+            log:debug("Etag does not match supplied if-match - Not overwriting")
+            return coap.precondition_failed()
+        end
+    end
+
     local mode
     if block1.id == 0 then
         mode = "wb"
     else
         mode = "ab"
     end
-    local fp = io.open("/"..req.path_str, mode)
+    local fp = io.open(path, mode)
     if not fp then
         return coap.internal_error("Could not open file for writing")
     end
@@ -91,8 +153,19 @@ end
 
 local function handle_fs_delete(req)
     local fname = "/"..req.path_str
-    if not os.remove(fname) then
-        return coap.not_found();
+
+    if req.if_match then
+        local etag = get_file_etag(fname)
+        if not tableContains(req.if_match, etag) then
+            -- The etag does not match any of the values supplied
+            log:debug("Etag does not match supplied if-match - Not overwriting")
+            return coap.precondition_failed()
+        end
+    end
+
+    local ret, msg = os.remove(fname);
+    if not ret then
+        return coap.not_found(msg);
     end
 end
 
@@ -101,6 +174,11 @@ local function handle_list(req)
     local dirname = "/"..req.path_str
     log:info("Listing directory", dirname);
 
+    -- If there's a query, we will start our list from that value (inclusive)
+    local startfrom = ""
+    if req.query and #req.query > 0 then
+        startfrom = req.query[1]
+    end
     local file_list = {}
     -- Values in the table are binary strings, not utf8 - we have to give the encoder a hint
     setmetatable(file_list, { __valenc= "bstr" })
@@ -110,18 +188,18 @@ local function handle_list(req)
     table.sort(filenames)
 
     local nextval = nil
-
+    local num_added = 0
     for i,fname in ipairs(filenames) do
-        local fullname = dirname.."/"..fname
-        local fp = io.open(fullname, "rb")
-        if fp == nil then
-            error("Could not open file "..fullname)
+        if fname >= startfrom then
+            if num_added > MAX_LIST_ENTRIES then
+                -- There are too many entries, and we run the risk of overflowing our packet size. Send a continuation token and return
+                nextval = fname
+                break
+            end
+            local fullname = dirname.."/"..fname
+            file_list[fname] = get_file_etag(fullname)
+            num_added = num_added + 1
         end
-        local hasher = digest:md5()
-        hasher:update(fp:read("a"))
-        local digest = hasher:digest()
-        file_list[fname] = digest
-        fp:close()
     end
 
     return coap.cbor_response{
@@ -131,12 +209,24 @@ local function handle_list(req)
 end
 
 coap.resources["fs"]={
-    get=handle_list,
+    get={
+        handler=handle_list,
+        desc="lists all files on the device's filesystem"
+    }
 }
 
 coap.pattern_resources["^fs/"]={
-    get=handle_fs_read,
-    put=handle_fs_write,
-    delete=handle_fs_delete,
+    get={
+        handler=handle_fs_read,
+        desc="reads a file"
+    },
+    put={
+        handler=handle_fs_write,
+        desc="writes a file"
+    },
+    delete={
+        handler=handle_fs_delete,
+        desc="deletes a file"
+    }
 }
 

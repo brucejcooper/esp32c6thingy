@@ -52,7 +52,7 @@ typedef struct {
     lstr_arr_t uri_path;
     lstr_arr_t uri_query;
     lstr_arr_t if_match;
-    lstr_arr_t if_none_match;
+    bool if_none_match;
     lstr_t etag;
 
     otCoapOptionContentFormat contentFormat;
@@ -87,59 +87,6 @@ typedef struct {
 
 
 static int coapHandlerFuncitonRef = LUA_NOREF;
-
-
-// static const char *messageTypeStrings[] = {
-//     "confirmable",
-//     "non_confirmable",
-//     "ack",
-//     "reset",
-// };
-
-
-
-// static TaskHandle_t handlerTask = NULL;
-
-
-
-
-
-// static int registerResource(lua_State *L){
-//     // We expect two parameters, a path and a handler function
-//     size_t sz;
-//     const char *path = luaL_checklstring(L, 1, &sz);
-
-//     // Handler
-//     if (!lua_isfunction(L, -1)) {
-//         luaL_argerror(L, 1, "Expected 2nd argument to be a function");
-//         return 1;
-//     }
-//     // Take a reference to the handler function, as we will use this when a call comes in to create a co-routine.
-//     int fnRef = luaL_ref(L, LUA_REGISTRYINDEX);
-//     ESP_LOGI(TAG, "Registered coap handler for resource '%s' fun with id %d", path, fnRef);
-//     // Pop off the arguments, as we no longer need them. 
-//     lua_pop(L, 2);
-
-//     // Now create the otCoap resource
-//     otCoapResource *resource = (otCoapResource *) malloc(sizeof(otCoapResource));
-//     assert(resource);
-//     resource->mContext = (void *) fnRef;
-//     resource->mHandler = coap_call_handler;
-//     resource->mNext = NULL;
-//     resource->mUriPath = strdup(path);
-//     assert(resource->mUriPath);
-
-//     otInstance *instance = esp_openthread_get_instance();
-//     otCoapAddResource(instance, resource);
-//     return 0;
-// }
-
-
-
-
-
-
-
 
 
 
@@ -183,7 +130,7 @@ void coap_packet_init(coap_packet_t *pkt) {
     lstr_arr_init(&pkt->uri_path, 3); // We give the path some initial capacity, because chances are it will be used.
     // The other string arrays are more unlikely to be used, so we start them out empty to save a few mallocs.
     lstr_arr_init(&pkt->if_match, 0);
-    lstr_arr_init(&pkt->if_none_match, 0);
+    pkt->if_none_match = false;
     lstr_arr_init(&pkt->uri_query, 0);
     pkt->payload.len = -1;
     pkt->code = OT_COAP_CODE_EMPTY;
@@ -193,7 +140,6 @@ void coap_packet_free(coap_packet_t *pkt) {
     lstr_arr_free(&pkt->uri_path);
     lstr_arr_free(&pkt->uri_query);
     lstr_arr_free(&pkt->if_match);
-    lstr_arr_free(&pkt->if_none_match);
 }
 
 uint32_t parseIntOpt(uint8_t *buf, size_t len) {
@@ -282,7 +228,8 @@ bool parse_coap_packet(coap_packet_t *pkt, uint8_t *buf, size_t numRead) {
                 lstr_arr_append(&pkt->if_match, (char *) ptr, opt_len);
                 break;
             case OT_COAP_OPTION_IF_NONE_MATCH:
-                lstr_arr_append(&pkt->if_none_match, (char *) ptr, opt_len);
+                // According to the RFC if-none-match has no value.  It only tests for existence
+                pkt->if_none_match = false;
                 break;
             case OT_COAP_OPTION_E_TAG:
                 pkt->etag.buf = (char *) ptr;
@@ -521,6 +468,24 @@ void coap_prepare_handler_arg(lua_State *L, void *ctx) {
     lua_pushstring(L, "path");
     lua_push_lstr_arr(L, &i->req.uri_path);
     lua_settable(L, -3);
+
+    if (i->req.uri_query.len > 0) {
+        lua_pushstring(L, "query");
+        lua_push_lstr_arr(L, &i->req.uri_query);
+        lua_settable(L, -3);
+    }
+
+    if (i->req.if_match.len > 0) {
+        lua_pushstring(L, "if_match");
+        lua_push_lstr_arr(L, &i->req.if_match);
+        lua_settable(L, -3);
+    }
+
+    if (i->req.if_none_match) {
+        lua_pushstring(L, "if_none_match");
+        lua_pushboolean(L, true);
+        lua_settable(L, -3);
+    }
 
 
     if (i->req.block2_id >= 0) {

@@ -20,6 +20,7 @@
 #include "lua_digest.h"
 #include "lua_cbor.h"
 #include <dirent.h>
+#include <sys/stat.h>
 
 #define TAG "lua_system"
 
@@ -496,6 +497,16 @@ static void run_coro(lua_State *L, lua_task_t *coro) {
 }
 
 
+static int io_exists(lua_State *L) {
+    const char * path;
+    struct stat st;
+    
+    if ((path = luaL_checkstring(L, 1)) != NULL) {
+        lua_pushboolean(L, stat(path, &st));
+    }
+    return 1;
+}
+
 static int io_readdir(lua_State *L) {
     const char *dirname = luaL_checkstring(L, 1);
     if (!dirname) {
@@ -526,6 +537,10 @@ static int lua_patch_io(lua_State *L) {
 
     lua_pushstring(L, "readdir");
     lua_pushcfunction(L, io_readdir);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "exists");
+    lua_pushcfunction(L, io_exists);
     lua_settable(L, -3);
 
     lua_pop(L, 1);

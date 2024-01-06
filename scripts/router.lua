@@ -17,18 +17,32 @@ local function info_handler()
     }
 end
 
+local function copy_table(t, into)
+    local c = into or {}
+    for k, v in pairs(t) do
+        if type(v) == 'table' then
+            c[k] = copy_table(v)
+        else
+            c[k] = v
+        end
+    end
+    return c
+end
+
 ---Lists all the resource paths that this device has registered
 ---@return table
 local function list_resources_handler()
-    local resourceList = cbor.encode_as_list{}
-    for path, _val in pairs(coap.resources) do
-        table.insert(resourceList, path)
+    local resourceList = copy_table(coap.resources)
+    -- Also add the pattern resources
+    copy_table(coap.pattern_resources, resourceList)
+
+    -- before we return, strip out the handlers, as that will bork serialisation
+    for path, methods in pairs(resourceList) do
+        for method, operation in pairs(methods) do
+            methods[method] = operation.desc
+        end
     end
 
-    -- Also add the patern paths - they should be easily distinguishable from literal paths.
-    for path, _val in pairs(coap.pattern_resources) do
-        table.insert(resourceList, path)
-    end
     return coap.cbor_response(resourceList)
 end
 
@@ -36,14 +50,23 @@ end
 
 coap.resources = {
     restart= {
-        post=restart_handler
+        post={
+            handler=restart_handler,
+            desc="restarts device"
+        }
     },
     info={
-        get=info_handler
+        get={
+            handler=info_handler,
+            desc="fetches information about the device"
+        }
     },
     -- This matches the root path (no path options supplied)
     [""]= {
-        get=list_resources_handler
+        get={
+            handler=list_resources_handler,
+            desc="lists all resource handlers that the device has"
+        }
     }
 }
 coap.pattern_resources = { }
@@ -90,9 +113,10 @@ coap.set_coap_handler(function(req)
     req.path_str = table.concat(req.path, "/")
     local methods = coap.lookup(req.path_str)
     if methods then
-        local handler = methods[req.code]
-        if handler then
-            return handler(req)
+        local operation = methods[req.code]
+        if operation then
+            log:info("invoking operation", operation.description)
+            return operation.handler(req)
         end
     end
     log:warn("No path matches", req.path_str)

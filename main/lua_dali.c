@@ -8,7 +8,7 @@
 #include "dali_driver.h"
 #include "lua_dali.h"
 
-#define TAG "gpio"
+#define TAG "dali"
 
 /**
  * Sends the supplied command to the dali device specified in the first argument.
