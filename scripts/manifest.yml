@@ -1,0 +1,12 @@
+# These files will be synced to all devices.
+common:
+  - file_server.lua
+  - router.lua
+
+# These files will only be synced to devices who's class matches 
+device_classes:
+  button:
+    - button.lua
+    - button_actions.lua
+  dali_bridge:
+    - dali.lua  

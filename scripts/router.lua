@@ -36,10 +36,10 @@ local function list_resources_handler()
     -- Also add the pattern resources
     copy_table(coap.pattern_resources, resourceList)
 
-    -- before we return, strip out the handlers, as that will bork serialisation
+    -- before we return, change each of the objects in the copy from the handler/desc pair into just the description
     for path, methods in pairs(resourceList) do
         for method, operation in pairs(methods) do
-            methods[method] = operation.desc
+            methods[method] = operation.desc or "No description"
         end
     end
 
@@ -86,24 +86,6 @@ function coap.lookup(path)
     end
 end
 
-function table.tostring(t)
-    local sep = "{"
-    local ret = ""
-
-    for k,v in pairs(t) do
-        local type = type(v)
-        local sval
-
-        if type == "table" then
-            sval = table.tostring(v)
-        else
-            sval = string.format("%s", v)
-        end
-        ret = ret..sep..k.."="..sval
-        sep = ","
-    end
-    return ret.."}"
-end
 
 
 ---A simple COAP handler that looks up handlers in the coap.resources field.
@@ -115,7 +97,7 @@ coap.set_coap_handler(function(req)
     if methods then
         local operation = methods[req.code]
         if operation then
-            log:info("invoking operation", operation.description)
+            log:debug("invoking operation", operation.desc)
             return operation.handler(req)
         end
     end

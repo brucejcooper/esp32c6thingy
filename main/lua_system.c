@@ -18,6 +18,7 @@
 #include "lua_log.h"
 #include "lua_dali.h"
 #include "lua_digest.h"
+#include "lua_openthread.h"
 #include "lua_cbor.h"
 #include <dirent.h>
 #include <sys/stat.h>
@@ -571,15 +572,20 @@ static void load_custom_libs(lua_State *L) {
     lua_pop(L, 1);
     luaL_requiref(L, "cbor", luaopen_cbor, true);
     lua_pop(L, 1);
+    luaL_requiref(L, "OpenThread", luaopen_openthread, true);
+    lua_pop(L, 1);
 }
 
 
-/**
- * Once the initial call to init.lua has been made, everything else ran in LUA is done through this task.
- * 
- */
-static void task_runner(void *aContext)
-{
+
+
+void run_lua_loop() {
+    esp_err_t err = esp_timer_init();
+    assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE); // To allow for somebody else to have already initialised it.
+
+    queue = xQueueCreate(10, sizeof(lua_task_t *));
+    assert(queue);
+
     lua_State *L = luaL_newstate();
     lua_task_t *coro;
     bool running = true;
@@ -611,28 +617,8 @@ static void task_runner(void *aContext)
         run_coro(L, coro);
     }
 
-
     // Close down the LUA Context. 
     lua_close(L);
     ESP_LOGI(TAG, "State closed, heap: %u", xPortGetFreeHeapSize());
-    vTaskDelete(NULL);
-}
 
-
-
-
-esp_err_t init_lua() {
-    esp_err_t err = esp_timer_init();
-    assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE); // To allow for somebody else to have already initialised it.
-
-    ESP_ERROR_CHECK(gpio_install_isr_service(0));
-
-    queue = xQueueCreate(10, sizeof(lua_task_t *));
-    if (!queue) {
-        ESP_LOGE(TAG, "Could not create event loop run queue");
-        return ESP_ERR_NO_MEM;
-    }
-    ESP_LOGI(TAG, "Starting LUA task");
-    xTaskCreate(task_runner, "lua", 10240, NULL, 5, NULL);
-    return ESP_OK;
 }

@@ -9,7 +9,7 @@
 typedef void (*coro_helper_fn_t)(lua_State *L, void *ctx);
 
 
-esp_err_t init_lua();
+void run_lua_loop();
 void lua_report_error(lua_State *L, int status, const char *prefix);
 void dumpStack(lua_State *L);
 const char *lua_type_str(lua_State *L, int idx);

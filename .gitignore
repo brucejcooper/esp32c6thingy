@@ -5,3 +5,4 @@ sdkconfig
 sdkconfig.old
 interface_*.c
 interface_*.h
+scripts/init_ot.lua

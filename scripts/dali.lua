@@ -37,37 +37,16 @@ end
 ---@param addr integer The address between 0 and 63 inclusive to toggle
 function Dali:toggle(addr) 
     if self:query_actual(addr) == 0 then
-        self:goto_last_active_level()
+        self:goto_last_active_level(addr)
     else
-        self:off()
+        self:off(addr)
     end
 end
 
-
-function Dali:serve_device(msg)
-    local logical_addr = tonumber(msg.path[#msg.path])
-    local physical_addr = self:gear_address(logical_addr)
-    
-    if msg.code == coap.CODE_GET then
-        local level = self:query_actual(physical_addr)
-        log:info("level of device", logical_addr, "is", level)
-        return {
-            level=level -- This will be CBOR encoded
-        }
-    elseif msg.code == coap.CODE_PUT then
-        log:info("Posted to device", logical_addr);
-        self:toggle(physical_addr);
-    else
-        msg.response_code = coap.CODE_METHOD_NOT_ALLOWED
-    end
-end
 
 
 function Dali:register_device(addr)
-    log:info("Address", addr)
-    coap.resource(string.format("dali/%d", addr), function(msg)
-        return self:serve_device(msg)
-    end)
+    self.registered_gear_addresses[addr] = true
 end
 
 
@@ -79,8 +58,61 @@ function Dali:scan()
             self:register_device(addr)
         end
     end
-
 end
+
+
+---A  wrapper to extract common parameters out, then pass that through to a more specific handler.
+function Dali:extract_gear_address(req, fn)
+    local logical_addr = tonumber(req.path[2])
+    if not logical_addr then
+        return coap.bad_request()
+    end
+
+    if not self.registered_gear_addresses[logical_addr] then
+        return coap.not_found()
+    end
+    local response = fn(self, req, logical_addr, self:gear_address(logical_addr))
+    if getmetatable(respone) ~= coap then
+        return coap.cbor_response(response)
+    else
+        return response
+    end
+end
+
+
+---Gets attributes of the dali gear at the supplied address
+---@param req any
+---@param logical_addr any
+---@param physical_addr any
+---@return unknown
+function Dali:handle_get(req, logical_addr, physical_addr)
+    local level = self:query_actual(physical_addr)
+    log:info("level of device", logical_addr, "is", level)
+    return {
+        level=level -- This will be CBOR encoded
+    }
+end
+
+
+function Dali:handle_post(req, logical_addr, physical_addr)
+    log:info("Posted to device", logical_addr);
+    self:toggle(physical_addr);
+end
+
+
+---Lists the logical addresses of all discovered dali devices.
+---@param req any
+---@return unknown
+function Dali:handle_list_devices(req)
+    local devices = cbor.encode_as_list{}
+    for id,val in ipairs(self.registered_gear_addresses) do
+        table.insert(devices, id)
+    end
+
+    return coap.cbor_response(devices)
+end
+
+
 
 
 --- Starts a DALI driver, and creates COAP resources to represent devices on the bus.
@@ -89,10 +121,34 @@ end
 ---@return table
 function Dali:new(tx, rx)
     local d = {
-        bus = DaliBus:new(tx,rx)
+        bus = DaliBus:new(tx,rx),
+        registered_gear_addresses={}
     }
     setmetatable(d, self)
     self.__index = self
+
+    coap.resources["dali"]={
+        get={
+            handler=function(req)
+                return d:handle_list_devices(req)
+            end
+        }
+    }
+
+    coap.pattern_resources["^dali/%d%d?"]={
+        get={
+            handler=function(req)
+                return d:extract_gear_address(req, Dali.handle_get)
+            end,
+            desc="Fetches attributes of a dali device"
+        },
+        post={
+            handler=function(req)
+                return d:extract_gear_address(req, Dali.handle_post)
+            end,
+            desc="Modifies a dali device"
+        }
+    }
 
     system.start_task(function()
         d:scan()
