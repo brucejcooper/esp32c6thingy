@@ -9,7 +9,7 @@ local log = Logger:new("dali")
 ---@return integer the value once shifted
 function Dali:gear_address(logical_address)
     if logical_address < 0 or logical_address > 63 then
-        error("Address must be between 0 and 63 inclusive")
+        error("Address must be between 0 and 63 inclusive, but %d was passed", logical_address)
     end
     return logical_address << 9;
 end
@@ -62,7 +62,7 @@ end
 
 
 ---A  wrapper to extract common parameters out, then pass that through to a more specific handler.
-function Dali:extract_gear_address(req, fn)
+function Dali:parse_addr(req, fn)
     local logical_addr = tonumber(req.path[2])
     if not logical_addr then
         return coap.bad_request()
@@ -71,7 +71,7 @@ function Dali:extract_gear_address(req, fn)
     if not self.registered_gear_addresses[logical_addr] then
         return coap.not_found()
     end
-    local response = fn(self, req, logical_addr, self:gear_address(logical_addr))
+    local response = fn(self, req, logical_addr)
     if getmetatable(respone) ~= coap then
         return coap.cbor_response(response)
     else
@@ -83,10 +83,9 @@ end
 ---Gets attributes of the dali gear at the supplied address
 ---@param req any
 ---@param logical_addr any
----@param physical_addr any
 ---@return unknown
-function Dali:handle_get(req, logical_addr, physical_addr)
-    local level = self:query_actual(physical_addr)
+function Dali:handle_get(req, logical_addr)
+    local level = self:query_actual(logical_addr)
     log:info("level of device", logical_addr, "is", level)
     return {
         level=level -- This will be CBOR encoded
@@ -94,9 +93,9 @@ function Dali:handle_get(req, logical_addr, physical_addr)
 end
 
 
-function Dali:handle_post(req, logical_addr, physical_addr)
+function Dali:handle_post(req, logical_addr)
     log:info("Posted to device", logical_addr);
-    self:toggle(physical_addr);
+    self:toggle(logical_addr);
 end
 
 
@@ -138,13 +137,13 @@ function Dali:new(tx, rx)
     coap.pattern_resources["^dali/%d%d?"]={
         get={
             handler=function(req)
-                return d:extract_gear_address(req, Dali.handle_get)
+                return d:parse_addr(req, Dali.handle_get)
             end,
             desc="Fetches attributes of a dali device"
         },
         post={
             handler=function(req)
-                return d:extract_gear_address(req, Dali.handle_post)
+                return d:parse_addr(req, Dali.handle_post)
             end,
             desc="Modifies a dali device"
         }
