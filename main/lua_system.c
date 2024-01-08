@@ -89,6 +89,57 @@ void schedule_callback_from_ISR(lua_callback_helper_t fn, void *ctx) {
 }
 
 
+int code_str_to_int(const char *str, const code_lookup_t *lookup) {
+    for (code_lookup_t *l = (code_lookup_t *) lookup; l->sval; l++) {
+        if (strcmp(l->sval, str) == 0) {
+            return l->ival;
+        }
+    }
+    return -1;
+}
+
+const char *code_int_to_str(int code, const code_lookup_t *lookup) {
+    for (code_lookup_t *l = (code_lookup_t *) lookup; l->sval; l++) {
+        if (code == l->ival) {
+            return l->sval;
+        }
+    }
+    return NULL;
+}
+
+int lua_lookup(lua_State *L, int argIdx, const code_lookup_t *lookup) {
+    int isnum;
+    int ival = lua_tointegerx(L, argIdx, &isnum);
+    if (isnum) {
+        while (lookup->sval != NULL) {
+            if (lookup->ival == ival) {
+                return ival;
+            }
+            lookup++;
+        }
+        ival = -1;
+    } else if (lua_isstring(L, argIdx)) {
+        const char *sval = lua_tostring(L, argIdx);
+        if (!sval) {
+            return -1;
+        }
+        return code_str_to_int(sval, lookup);
+    }
+    return -1;
+
+}
+
+
+
+
+int check_esp_err(lua_State *L, esp_err_t err) {
+    if (err != ESP_OK) {
+        luaL_error(L, esp_err_to_name(err));
+        return 1;
+    }
+    return 0;
+
+}
 
 
 

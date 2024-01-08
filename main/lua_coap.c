@@ -89,11 +89,6 @@ typedef struct {
 static int coapHandlerFuncitonRef = LUA_NOREF;
 
 
-typedef struct {
-    const char *sval;
-    int ival;
-} code_lookup_t;
-
 
 static const code_lookup_t code_lookup[] = {
     {.sval="empty", .ival=OT_COAP_CODE_EMPTY},
@@ -131,23 +126,6 @@ static const code_lookup_t code_lookup[] = {
     {.sval=NULL, .ival=0}
 };
 
-static otCoapCode code_str_to_int(const char *str) {
-    for (code_lookup_t *l = (code_lookup_t *) code_lookup; l->sval; l++) {
-        if (strcmp(l->sval, str) == 0) {
-            return l->ival;
-        }
-    }
-    return -1;
-}
-
-static const char *code_int_to_str(otCoapCode code) {
-    for (code_lookup_t *l = (code_lookup_t *) code_lookup; l->sval; l++) {
-        if (code == l->ival) {
-            return l->sval;
-        }
-    }
-    return NULL;
-}
 
 
 
@@ -526,7 +504,7 @@ int coap_block_opt(lua_State *L) {
 void log_response(otCoapCode reqCode, const char *reqPath, size_t req_payload_len, coap_response_t *i) {
     // Response is at index 2
     // request is at index 3
-    ESP_LOGI("request", "%s %s %d - %d.%d %d", code_int_to_str(reqCode), reqPath, req_payload_len, i->response_buf[1] >> 5, i->response_buf[1] & 0x1F, i->payload_started ? i->payload_len : -1);
+    ESP_LOGI("request", "%s %s %d - %d.%d %d", code_int_to_str(reqCode, code_lookup), reqPath, req_payload_len, i->response_buf[1] >> 5, i->response_buf[1] & 0x1F, i->payload_started ? i->payload_len : -1);
 }
 
 
@@ -592,7 +570,7 @@ int lua_coap_reply(lua_State *L) {
     // Set the code on the response, if present
     lua_getfield(L, 2, "code");
     if (lua_isstring(L, -1)) {
-        int ival = code_str_to_int(lua_tostring(L, -1));
+        int ival = code_str_to_int(lua_tostring(L, -1), code_lookup);
         if (ival == -1) {
             luaL_argerror(L, 2, "response code is invlalid");
         }
@@ -742,7 +720,7 @@ void new_lua_req_obj(lua_State *L, coap_packet_t *req, const otMessageInfo *msgi
 
 
     lua_pushstring(L, "code");
-    lua_pushstring(L, code_int_to_str(req->code));
+    lua_pushstring(L, code_int_to_str(req->code, code_lookup));
     lua_settable(L, -3);
 
     lua_pushstring(L, "message_id");

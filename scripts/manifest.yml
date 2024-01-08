@@ -2,7 +2,7 @@
 common:
   - file_server.lua
   - router.lua
-  - event_loop.lua
+  - async.lua
 
 # These files will only be synced to devices who's class matches 
 device_classes:

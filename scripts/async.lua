@@ -1,14 +1,10 @@
-local log = Logger:new("event_loop")
+local log = Logger:new("async")
 
----Represents a singleton object that will manage running co-routines with the concept of futures. 
----A future is a thing that will be set in the future (usually by a callback from C).  a task function
----(passed to EventLoop.start) may do a coroutine.yield on a Future to wait for it to be set, then continue
----execution once that future resolves. As a syntatic convinence, EventLoop.await will do that yield for you. 
----It is possible to wait on one of multiple futures by using Future:oneof - This will call the cancel method
----on all but the first future to resolve, and will resovle to that first one. 
-EventLoop = {
-    waiting_tasks = {}
-}
+---@class Task
+---Represents a mechanism for async await using coroutines.  Start a task by passing a function to start_async_task.
+---This function can then yield on any Future created by a function etc... If you want to wait on
+---multiple conditions, then use Future.oneof()
+-- As a 
 local Task = {}
 Task.__index = Task
 
@@ -19,7 +15,7 @@ Future.__index = Future
 
 function Future:new(init)
     local instance = init or {}
-    instance.state = "pending"
+    instance.is_set = false
     setmetatable(instance, self)
     return instance
 end
@@ -32,13 +28,12 @@ local function oneof_child_resolved(child_future, val)
         end
     end
     -- Set our value to the same value as the child
-    child_future.set(val)
+    child_future.parent:set(val)
 
 end
 
 ---Creates a future that will resolve to the first one that resolves from a set of choices
----If you pass in just one future, that will be returned as an optimisation
----@param futurelist table<Future> list of futures that will comprise this future
+---@param ... Future list of at least one future that will comprise this future - If you just pass one it will return that.
 ---@return Future
 function Future:oneof(...)
     local num = select('#', ...)
@@ -48,7 +43,7 @@ function Future:oneof(...)
         return varargs[1]
     end
     local f = Future:new({ choices=varargs})
-    for i,choice in ipairs(arg) do
+    for i,choice in ipairs(varargs) do
         choice.parent = f
         choice.on_set = oneof_child_resolved
     end
@@ -56,8 +51,8 @@ function Future:oneof(...)
 end
 
 function Future:set(val)
-    assert(self.state == "pending", "Condition already completed")
-    self.state = "set"
+    assert(not self.is_set, "Condition already completed")
+    self.is_set = true
     self.value = val
     if self.on_set then
         self.on_set(self, val)
@@ -67,24 +62,39 @@ end
 
 local function cancel_deferred_future(f)
     f.timer:stop()
-    f.timer:delete()
+    if not f.reusable then
+        f.timer:delete()
+    end
 end
 
 local function deferred_future_timer_fired(t)
-    t:delete()
-    t.future:set(t.future.value)
+    local f = t.future
+    if not f.reusable then
+        t:delete()
+    end
+    f:set(f.deferred_value)
 end
 
 
 ---Creates a future that will be set after a specified delay (unless cancelled first)
 ---@param timeout integer the number of milliseconds that the future will be deferred for
 ---@param value any the value that the future will be set to when the timer goes off
-function Future:defer(timeout, value)
-    local timer = Timer:new(deferred_future_timer_fired)
+---@param reuseable_timer Timer By default, the future will create and delete a new timer each time.  To make things more efficiennt, you can pass in a reusable timer that will be re-used
+function Future:defer(timeout, value, reuseable_timer)
+    local timer
+    local reusable = false
+    if reuseable_timer then
+        timer = reuseable_timer
+        timer.on_timeout = deferred_future_timer_fired
+        reusable = true
+    else
+        timer = Timer:new(deferred_future_timer_fired)
+    end
     local f = Future:new{
         timer=timer,
-        value=value,
-        cancel=cancel_deferred_future
+        deferred_value=value,
+        cancel=cancel_deferred_future,
+        reusable=reusable
     }
     timer.future = f
     timer:start(timeout)
@@ -92,9 +102,8 @@ function Future:defer(timeout, value)
 end
 
 
-function EventLoop:start(fn, firstarg)
+function start_async_task(fn, firstarg)
     local task = {
-        loop=EventLoop,
         thread=coroutine.create(fn)
     }
     setmetatable(task, Task)
@@ -113,8 +122,13 @@ end
 
 ---Called from within an EventLopp task - this will suspend activity until one of the supplied futures resolves. 
 ---@param ... Future A set of futures that the loop will wait for
-function EventLoop:await(...)
-    local ret = coroutine.yield(Future:oneof(...))
+function await(...)
+    local f = Future:oneof(...)
+    -- If the future is already set, then short-circuit.
+    if f.is_set then
+        return f.value
+    end
+    local ret = coroutine.yield(f)
     return ret;
 end
 
@@ -130,7 +144,6 @@ function Task:set_future(future)
     future.task = self
     self.awaiting = future
     future.on_set = task_future_set
-    EventLoop.waiting_tasks[self] = future
 end
 
 
@@ -147,19 +160,18 @@ function Task:continue_execution(future_result)
             else    
                 log:debug("Task", self, "successfully completed");
             end
-            EventLoop.waiting_tasks[self] = nil
         else
             -- The coroutine is still running, and returned another future.
-            self:future_completed(callresult)
+            if (getmetatable(callresult) == Future) then
+                self:set_future(callresult)
+            else
+                log:error("Async task returned something that isn't a future");
+            end
         end
     else
         -- There was a problem running the task
-        if self.error_handler then
-            self.error_handler(self, callresult)
-        else
-            log:error("Unhandled error running task:", callresult)
-        end
+        log:error("Unhandled error running task:", callresult )
+        log:error(debug.traceback(self.thread))
+        
     end
 end
-
-return EventLoop

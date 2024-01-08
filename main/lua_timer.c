@@ -64,15 +64,11 @@ int start_timer(lua_State *L) {
     repeat = lua_toboolean(L, 3);
 
     lua_timer_userdata_t *ud = get_timer_userdata(L, 1);
-    esp_err_t err;
     if (repeat) {
-        err = esp_timer_start_periodic(ud->timer, delayMs*1000);
+        LUA_ESP_ERR_CHECK(esp_timer_start_periodic(ud->timer, delayMs*1000));
     } else {
-        err =esp_timer_start_once(ud->timer, delayMs*1000);
+        LUA_ESP_ERR_CHECK(esp_timer_start_once(ud->timer, delayMs*1000));
     }
-
-    assert(err != ESP_ERR_INVALID_ARG);
-    return err == ESP_OK;
     return 0;
 }
 
@@ -88,21 +84,8 @@ int restart_timer(lua_State *L) {
         return 1;
     }
     lua_timer_userdata_t *ud = get_timer_userdata(L, 1);
-    switch (esp_timer_restart(ud->timer, delayMs*1000)) {
-        case ESP_OK:
-            return 0;
-        case ESP_ERR_INVALID_STATE:
-            luaL_error(L, "Timer not started");
-            return 1;
-            break;
-        case ESP_ERR_INVALID_ARG:
-            luaL_error(L, "Corrupt timer");
-            break;
-        default:
-            assert(false);
-    }
+    LUA_ESP_ERR_CHECK(esp_timer_restart(ud->timer, delayMs*1000));
     return 0;
-
 }
 
 int stop_timer(lua_State *L) {
@@ -111,16 +94,7 @@ int stop_timer(lua_State *L) {
         return 1;
     }
     lua_timer_userdata_t *ud = get_timer_userdata(L, 1);
-    switch (esp_timer_stop(ud->timer)) {
-        case ESP_OK: 
-            lua_pushboolean(L, true);
-            return 1;
-        case ESP_ERR_INVALID_STATE:
-            lua_pushboolean(L, false);
-            return 1;
-        default:
-            assert(false);
-    }
+    LUA_ESP_ERR_CHECK(esp_timer_stop(ud->timer));
     return 0;
 }
 
@@ -130,19 +104,8 @@ int delete_timer(lua_State *L) {
         return 1;
     }
     lua_timer_userdata_t *ud = get_timer_userdata(L, 1);
-    esp_err_t err = esp_timer_delete(ud->timer);
-
-    switch (err) {
-        case ESP_OK:
-            ud->timer = NULL;
-            luaL_unref(L, LUA_REGISTRYINDEX, ud->timerRef);
-            break;
-        case ESP_ERR_INVALID_STATE:
-            luaL_error(L, "Invalid timer");
-            return 1;
-        default:
-            assert(false);
-    }
+    LUA_ESP_ERR_CHECK(esp_timer_delete(ud->timer));
+    ud->timer = 0; // This should be an invalid value, so all subsequent calls will then fail. 
     return 0;
 }
 
@@ -168,11 +131,7 @@ int lua_timer_new(lua_State *L) {
         .name = NULL,
         .dispatch_method = ESP_TIMER_ISR
     };
-    esp_err_t err = esp_timer_create(&args, &ud->timer);
-    if (err != ESP_OK) {
-        luaL_error(L, "Error starting ESP timer: %s", esp_err_to_name(err));
-        return 1; 
-    }
+    LUA_ESP_ERR_CHECK(esp_timer_create(&args, &ud->timer));
 
     lua_pushstring(L, "on_timeout");
     lua_pushvalue(L, 2);

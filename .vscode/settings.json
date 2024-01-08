@@ -4,5 +4,17 @@
         "board/esp32c6-bridge.cfg"
     ],
     "idf.flashType": "UART",
-    "Lua.diagnostics.globals": ["system", "gpio", "coap", "cbor", "Logger", "OpenThread", "DaliBus", "digest"]
+    "Lua.diagnostics.globals": [
+        "system",
+        "gpio",
+        "coap",
+        "cbor",
+        "Logger",
+        "OpenThread",
+        "DaliBus",
+        "digest",
+        "await",
+        "start_async_task",
+        "Timer",
+    ]
 }
