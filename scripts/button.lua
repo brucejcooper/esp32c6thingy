@@ -7,8 +7,13 @@ Button = {}
 local log = Logger:new("button")
 
 
+---@class GpioFuture A GPIO specific future that will resolve when the specified pin goes to the supplied level. 
 local GpioFuture = {}
 
+---comment
+---@param pin integer a value between 0 and 32 that represents the ESP32 pin number
+---@param level "low"|"high" What level you're looking for
+---@return GpioFuture The instance
 function GpioFuture:new(pin, level)
     local f = Future:new{
         pin=pin,
@@ -30,9 +35,9 @@ function GpioFuture:cancel()
 end
 
 
---- 
--- Creates a new button instance.  Each button starts a co-routine that will loop forever
--- (taking advantage of tail calls), handling clicks, long presses and 
+---Creates a new button instance.  Each button starts a co-routine that will loop forever
+---(taking advantage of tail calls), handling clicks, long presses and 
+---@return Button the button instance.
 function Button:new(initval) 
     if not initval.pin then
         error("No pin specified")
@@ -59,22 +64,19 @@ function Button:new(initval)
 end
 
 
----
--- Called when pressed or released to ignore any noise caused by bouncy switches.  
--- Returns the level of the switch after this delay (to ensure that its still at the right level)
+---Called when pressed or released to ignore any noise caused by bouncy switches.  
+---@return integer the level of the switch after this delay (to ensure that its still at the right level)
 function Button:debounce()
     -- Do a debounce (ignore input for a bit)
     await(Future:defer(75, -1, self.timer))
     -- If it is still pressed, then we have a valid button press
-    local lvl = gpio.get(self.pin)
-    return lvl;
+    return gpio.get(self.pin)
 end
 
 -- Each Method below represents a button state. It takes advantage of tail calls to not fill up the stack, but
 -- will hop from method to method representing each action that occurs. 
 
----
--- Called when the button is released, and we're waiting for it to be pressed.  Does debuonching, then moves onto pressed state
+---Called when the button is released, and we're waiting for it to be pressed.  Does debuonching, then moves onto pressed state
 function Button:wait_for_press() 
     while true do
         -- Wait for pin to go to 0 (pressed)
@@ -88,29 +90,24 @@ function Button:wait_for_press()
     end
 end
 
----
--- Event method called whenever the button is clicked (presse then released before the long click delay)
+---Event method called whenever the button is clicked (presse then released before the long click delay)
 function Button:on_click()
 end
 
----
--- Event function called when the button is first pressed.
+---Event function called when the button is first pressed.
 function Button:on_press()
 end
 
----
--- Event method called when the button is released, whether it was long clicked or not.
+---Event method called when the button is released, whether it was long clicked or not.
 function Button:on_release()
 end
 
----
--- Event method called if the button is pressed for a long period, then repeatedly after that based on the timer value passed in.
+---Event method called if the button is pressed for a long period, then repeatedly after that based on the timer value passed in.
 function Button:on_long_press()
 end
 
 
----
--- Called after the button is pressed and debounced.
+--- Called after the button is pressed and debounced.
 function Button:pressed()
     self:on_press()
     self.repeat_count = 0;
@@ -123,8 +120,7 @@ function Button:pressed()
     end
 end
 
----
--- Called after the button is released (but not yet debounced)
+--- Called after the button is released (but not yet debounced)
 function Button:released()
     -- Button was released
     if (self.repeat_count == 0) then
@@ -136,15 +132,14 @@ function Button:released()
     return self:wait_for_press()
 end
 
----
--- Called when the button is held down for a long period of time.  Will be called repeatedly (each repeat_delay ms) until the button is released.
+--- Called when the button is held down for a long period of time.  Will be called repeatedly (each repeat_delay ms) until the button is released.
 function Button:long_pressed()
     local released = false
     repeat
         self.repeat_count = self.repeat_count + 1
         self:on_long_press()
         -- Wait for the repeat timeout to occur, or for the button to have been released
-        released = await(Future:oneof(GpioFuture:new(self.pin, "high"), Future:defer(self.repeat_delay, -1, self.timer))) ~= -1
+        released = await(GpioFuture:new(self.pin, "high"), Future:defer(self.repeat_delay, -1, self.timer)) ~= -1
     until released
     return self:released()
 end
