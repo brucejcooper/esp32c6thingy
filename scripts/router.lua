@@ -43,7 +43,7 @@ local function list_resources_handler()
         end
     end
 
-    return coap.cbor_response(resourceList)
+    return req.reply_cbor(resourceList)
 end
 
 
@@ -97,10 +97,22 @@ coap.set_coap_handler(function(req)
     if methods then
         local operation = methods[req.code]
         if operation then
-            log:debug("invoking operation", operation.desc)
-            return operation.handler(req)
+            log:info("invoking operation", operation.desc)
+            local success, res = pcall(operation.handler, req)
+            if success then
+                if not res.replied then
+                    log:warn("Handler did not reply.  Message will not be responded to")
+                end
+                if res ~= nil then
+                    log:warn("Handler returned a value, but we don't do anything with it")
+                else
+                    log:info("Handler succeeded")
+                end
+            else
+                return req.internal_error(res)
+            end
         end
     end
     log:warn("No path matches", req.path_str)
-    return coap.not_found()
+    return req.reply_not_found()
 end)

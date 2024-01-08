@@ -8,6 +8,7 @@ idf_component_register(SRCS
                     "lua_gpio.c"
                     "lua_digest.c"
                     "lua_openthread.c"
+                    "lua_timer.c"
                     "lua_cbor.c"
                     "dali_rmt_encoder.c" 
                     INCLUDE_DIRS "."

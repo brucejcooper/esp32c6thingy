@@ -208,6 +208,9 @@ static void ot_task_worker(void *aContext)
     esp_openthread_launch_mainloop();
 
 
+    ESP_LOGW(TAG, "Openthread mainloop exited.  This shouldn't normally happen");
+
+
     // Clean up
     esp_netif_destroy(openthread_netif);
     esp_openthread_netif_glue_deinit();
@@ -226,6 +229,98 @@ static int start_ot(lua_State *L){
     if (!lua_istable(L,1)) {
         luaL_argerror(L, 1, "Expected table");
     }
+
+    esp_openthread_platform_config_t config = {
+        .radio_config = {
+            .radio_mode = RADIO_MODE_NATIVE,
+        },
+        .host_config = {                                              
+            .host_connection_mode = HOST_CONNECTION_MODE_CLI_UART,  
+            .host_uart_config = {                                   
+                .port = 0,                                          
+                .uart_config =                                      
+                    {                                               
+                        .baud_rate = 115200,                     
+                        .data_bits = UART_DATA_8_BITS,              
+                        .parity = UART_PARITY_DISABLE,              
+                        .stop_bits = UART_STOP_BITS_1,              
+                        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,      
+                        .rx_flow_ctrl_thresh = 0,                   
+                        .source_clk = UART_SCLK_DEFAULT,            
+                    },                                              
+                .rx_pin = UART_PIN_NO_CHANGE,                       
+                .tx_pin = UART_PIN_NO_CHANGE,                       
+            },                                                      
+        },
+        .port_config = {
+            .storage_partition_name = "nvs",
+            .netif_queue_size = 10,        
+            .task_queue_size = 10,
+        },
+    };
+
+
+    ESP_ERROR_CHECK(esp_openthread_init(&config));
+
+    // The OpenThread log level directly matches ESP log level
+    (void)otLoggingSetLevel(CONFIG_LOG_DEFAULT_LEVEL);
+
+    // otInstance *instance = esp_openthread_get_instance();
+
+    // otOperationalDataset dataset;
+    // size_t len = 0;
+    // otDatasetCreateNewNetwork(instance, &dataset);
+    // // Active timestamp
+    // dataset.mActiveTimestamp.mSeconds = 1;
+    // dataset.mActiveTimestamp.mTicks = 0;
+    // dataset.mActiveTimestamp.mAuthoritative = false;
+    // dataset.mComponents.mIsActiveTimestampPresent = true;
+
+    // // Channel, Pan ID, Network Name
+    // dataset.mChannel = CONFIG_OPENTHREAD_NETWORK_CHANNEL;
+    // dataset.mComponents.mIsChannelPresent = true;
+    // dataset.mPanId = CONFIG_OPENTHREAD_NETWORK_PANID;
+    // dataset.mComponents.mIsPanIdPresent = true;
+    // len = strlen(CONFIG_OPENTHREAD_NETWORK_NAME);
+    // assert(len <= OT_NETWORK_NAME_MAX_SIZE);
+    // memcpy(dataset.mNetworkName.m8, CONFIG_OPENTHREAD_NETWORK_NAME, len + 1);
+    // dataset.mComponents.mIsNetworkNamePresent = true;
+
+    // // Extended Pan ID
+    // len = hex_string_to_binary(CONFIG_OPENTHREAD_NETWORK_EXTPANID, dataset.mExtendedPanId.m8,
+    //                             sizeof(dataset.mExtendedPanId.m8));
+    // ESP_RETURN_ON_FALSE(len == sizeof(dataset.mExtendedPanId.m8), ESP_FAIL, OT_PLAT_LOG_TAG,
+    //                     "Cannot convert OpenThread extended pan id");
+    // dataset.mComponents.mIsExtendedPanIdPresent = true;
+
+    // // Mesh Local Prefix
+    // otIp6Prefix prefix;
+    // memset(&prefix, 0, sizeof(otIp6Prefix));
+    // if (otIp6PrefixFromString(CONFIG_OPENTHREAD_MESH_LOCAL_PREFIX, &prefix) == OT_ERROR_NONE) {
+    //     memcpy(dataset.mMeshLocalPrefix.m8, prefix.mPrefix.mFields.m8, sizeof(dataset.mMeshLocalPrefix.m8));
+    //     dataset.mComponents.mIsMeshLocalPrefixPresent = true;
+    // } else {
+    //     ESP_LOGE("Falied to parse mesh local prefix", CONFIG_OPENTHREAD_MESH_LOCAL_PREFIX);
+    // }
+
+    // // Network Key
+    // len = hex_string_to_binary(CONFIG_OPENTHREAD_NETWORK_MASTERKEY, dataset.mNetworkKey.m8,
+    //                             sizeof(dataset.mNetworkKey.m8));
+    // ESP_RETURN_ON_FALSE(len == sizeof(dataset.mNetworkKey.m8), ESP_FAIL, OT_PLAT_LOG_TAG,
+    //                     "Cannot convert OpenThread master key");
+    // dataset.mComponents.mIsNetworkKeyPresent = true;
+
+    // // PSKc
+    // len = hex_string_to_binary(CONFIG_OPENTHREAD_NETWORK_PSKC, dataset.mPskc.m8, sizeof(dataset.mPskc.m8));
+    // ESP_RETURN_ON_FALSE(len == sizeof(dataset.mPskc.m8), ESP_FAIL, OT_PLAT_LOG_TAG,
+    //                     "Cannot convert OpenThread pre-shared commissioner key");
+    // dataset.mComponents.mIsPskcPresent = true;
+
+    // ESP_RETURN_ON_FALSE(otDatasetSetActive(instance, &dataset) == OT_ERROR_NONE, ESP_FAIL, OT_PLAT_LOG_TAG,
+    //                     "Failed to set OpenThread active dataset");
+
+
+    // esp_openthread_auto_start(&dataset);
 
 
     xTaskCreate(ot_task_worker, "ot_loop", 10240, xTaskGetCurrentTaskHandle(), 5, NULL);

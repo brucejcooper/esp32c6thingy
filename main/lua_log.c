@@ -8,9 +8,6 @@
 #include <string.h>
 #include "lua_system.h"
 
-static const char *TAG = "lua";
-
-
 static inline int copy_string(char *buf, char *val, int remain) {
     int sz = strlen(val);
     if (remain > sz) {
@@ -29,15 +26,15 @@ static int do_log(lua_State *L, int log_level) {
     assert(lua_getfield(L, 1, "name"));
     const char *tag = lua_tostring(L, -1);
 
-    if (log_level >= esp_log_level_get(tag)) {
+    if (log_level <= esp_log_level_get(tag)) {
         char buf[1024];
         char *bufptr = buf;
         int remain = sizeof(buf);
 
 
         int nargs = lua_gettop(L);
-        for (int arg = 1; arg < nargs; arg++) { // Skip the last one, cos that's the level
-            if (arg != 1) {
+        for (int arg = 2; arg < nargs; arg++) {
+            if (arg != 2) {
                 *bufptr++ = '\t';
                 remain--;
             }
@@ -62,7 +59,8 @@ static int do_log(lua_State *L, int log_level) {
                     break;
 
                 case LUA_TTABLE:
-                    sz = copy_string(bufptr, "table", remain);
+                    sz = snprintf(bufptr, remain, "table(%p)", lua_topointer(L, arg));
+
                     break;
 
                 case LUA_TNIL:

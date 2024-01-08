@@ -38,10 +38,35 @@ static int config_input(lua_State *L) {
     return 0;
 }
 
+static int cancel_await_level(lua_State *L) {
+    return 0;
+}
+
+static int await_level(lua_State *L) {
+    int isnum;
+    int pin = lua_tointegerx(L, 1, &isnum);
+    if (!isnum || pin < 0 || pin > 32) {
+        luaL_argerror(L, 1, "Expected an int within the normal pin range");
+        return 1;
+    }
+
+    // Create a future that we will call once the interrupt fires
+    lua_getglobal(L, "Future");
+    lua_getfield(L, -1, "new");
+    lua_newtable(L); // The argument to new
+    lua_pushstring(L, "cancel");
+    lua_pushcfunction(L, cancel_await_level);
+    lua_settable(L, -3);
+
+    lua_call(L, 1, 1);
+    return 1;
+}
+
 
 static const struct luaL_Reg log_funcs[] = {
     { "get", get },
     { "config_input", config_input },
+    { "await_level", await_level },
     { NULL, NULL }
 };
 

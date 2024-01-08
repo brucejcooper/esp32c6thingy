@@ -72,7 +72,7 @@ function Dali:parse_addr(req, fn)
         return coap.not_found()
     end
     local response = fn(self, req, logical_addr)
-    if getmetatable(respone) ~= coap then
+    if getmetatable(response) ~= coap then
         return coap.cbor_response(response)
     else
         return response

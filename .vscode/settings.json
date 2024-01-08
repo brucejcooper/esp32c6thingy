@@ -3,5 +3,6 @@
     "idf.openOcdConfigs": [
         "board/esp32c6-bridge.cfg"
     ],
-    "idf.flashType": "UART"
+    "idf.flashType": "UART",
+    "Lua.diagnostics.globals": ["system", "gpio", "coap", "cbor", "Logger", "OpenThread", "DaliBus", "digest"]
 }
