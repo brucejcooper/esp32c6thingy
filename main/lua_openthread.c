@@ -455,8 +455,7 @@ void udpCallback(void *aContext, otMessage *aMessage, const otMessageInfo *aMess
     uint8_t buf[1500]; // Bigger than the MTU
     size_t bufsz;
 
-    ESP_LOGI(TAG, "Received UDP Datagram");
-
+    ESP_LOGD(TAG, "Received UDP Datagram");
 
     lua_State *L = acquireLuaMutex();
     // Get the serverSocket object

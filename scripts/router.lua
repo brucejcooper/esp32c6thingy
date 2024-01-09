@@ -57,6 +57,40 @@ function coap.cbor_content(content)
     }
 end
 
+local response_codes = {
+    "emtpy",
+    "created",
+    "deleted",
+    "valid",
+    "changed",
+    "content",
+    "continue",
+
+    "bad_request",
+    "unauthorized",
+    "bad_option",
+    "forbidden",
+    "not_found",
+    "method_not_allowed",
+    "not_accpetable",
+    "request_incomplete",
+    "precondition_failed",
+    "request_too_large",
+    "unsupported_format",
+
+    "internal_error",
+    "not_implemented",
+    "bad_gateway",
+    "service_unavailable",
+    "gateway_timeout",
+    "proxy_not_supported",
+}
+
+-- Make some convenience handlers.
+for i,code in ipairs(response_codes) do
+    coap[code] = function(p) return { code=code, payload=p } end
+end
+
 
 coap.resources = {
     restart= {

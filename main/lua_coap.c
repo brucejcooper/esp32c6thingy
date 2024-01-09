@@ -438,10 +438,25 @@ void lua_push_lstr_arr(lua_State *L, lstr_arr_t *a) {
     }
 }
 
-int coap_block_opt(lua_State *L) {
-    int id = lua_tointeger(L, 1);
-    int size = lua_tointeger(L, 2);
-    bool more = lua_toboolean(L, 3);
+int coap_block_opt(lua_State *L, int argidx) {
+    if (!lua_istable(L, argidx)) {
+        luaL_error(L, "Arg must be a table");
+        return -1;
+    }
+
+    lua_getfield(L, argidx, "id");
+    int id = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, argidx, "size");
+    int size = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, argidx, "more");
+    int more = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+
+
     int sizex;
     if (size == 16) {
         sizex = 0;
@@ -458,15 +473,14 @@ int coap_block_opt(lua_State *L) {
     } else if (size == 1024) {
         sizex = 6;
     } else {
-        luaL_argerror(L, 2, "Invalid size value");
-        return 1;
+        luaL_argerror(L, 1, "Invalid size value");
+        return -1;
     }
     uint32_t val = id << 4 | sizex;
     if (more) {
         val |= 0x08;
     }
-    lua_pushinteger(L, val);
-    return 1;
+    return val;
 }
 
 
@@ -491,7 +505,7 @@ otCoapCode getRequestCode(lua_State *L, int argIdx) {
 /**
  * Serialises a table representing a COAP message to a CoAP binary packet.
  */
-static int lua_coap_serialise(lua_State *L) {
+static int lua_encode(lua_State *L) {
     coap_response_t resp;
 
     size_t tokensz;
@@ -581,9 +595,14 @@ static int lua_coap_serialise(lua_State *L) {
 
     // |    23 | Block2           | [RFC7959] |
     lua_getfield(L, 1, "block2");
-    if (lua_isinteger(L, -1)) {
-        ESP_LOGD(TAG, "encoding block2 response 0x%02llx", lua_tointeger(L, -1));
-        if (coap_response_append_uint_option(&resp, OT_COAP_OPTION_BLOCK2, lua_tointeger(L, -1)) != CCPEED_NO_ERR) {
+    if (lua_istable(L, -1)) {
+        int blockOpt;
+        if ((blockOpt = coap_block_opt(L, -1)) < 0) {
+            return 1;
+        }
+        ESP_LOGD(TAG, "encoding block2 response 0x%02x", blockOpt);
+
+        if (coap_response_append_uint_option(&resp, OT_COAP_OPTION_BLOCK2, blockOpt) != CCPEED_NO_ERR) {
             luaL_argerror(L, 1, "Could not set block2 option");
             return 1;
         }
@@ -593,8 +612,12 @@ static int lua_coap_serialise(lua_State *L) {
     // |     27 | Block1           | [RFC7959] |
     lua_getfield(L, 1, "block1");
     if (lua_isinteger(L, -1)) {
-        ESP_LOGD(TAG, "Setting block1");
-        if (coap_response_append_uint_option(&resp, OT_COAP_OPTION_BLOCK1, lua_tointeger(L, -1)) != CCPEED_NO_ERR) {
+        int blockOpt;
+        if ((blockOpt = coap_block_opt(L, -1)) < 0) {
+            return 1;
+        }
+        ESP_LOGD(TAG, "encoding block1 response 0x%02x", blockOpt);
+        if (coap_response_append_uint_option(&resp, OT_COAP_OPTION_BLOCK1, blockOpt) != CCPEED_NO_ERR) {
             luaL_argerror(L, 1, "Could not set block1 option");
             return 1;
         }
@@ -651,7 +674,7 @@ static int lua_coap_serialise(lua_State *L) {
 /**
  * Arg 1 is a string
 */
-static int lua_coap_parse(lua_State *L) {
+static int lua_decode(lua_State *L) {
     coap_packet_t req;
     coap_packet_init(&req);
 
@@ -742,99 +765,11 @@ static int lua_coap_parse(lua_State *L) {
     return 1;
 }
 
-int lua_wrap_response_with_code(lua_State *L, const char *code) {
-    bool wrapped = false;
-    int nArgs = lua_gettop(L);
-
-    if (!lua_istable(L, 1)) {
-        wrapped = true;
-        lua_newtable(L);
-    }
-    lua_pushstring(L, "code");
-    lua_pushstring(L, code);
-    lua_settable(L, 1);
-
-    if (wrapped && nArgs > 0) {
-        if (!lua_isstring(L, 1)) {
-            luaL_argerror(L, 1, "First arg must be a string or a table");
-            return 1;
-        }
-        lua_pushstring(L, "payload");
-        lua_pushvalue(L, 1);
-        lua_settable(L, -3);
-    }
-    return 1;
-}
-
-
-#define STATUS_FUNC(C) static int reply_##C(lua_State *L) { return lua_wrap_response_with_code(L, #C); }
-
-STATUS_FUNC(empty);
-STATUS_FUNC(created);
-STATUS_FUNC(deleted);
-STATUS_FUNC(valid);
-STATUS_FUNC(changed);
-STATUS_FUNC(content);
-STATUS_FUNC(continue);
-
-STATUS_FUNC(bad_request);
-STATUS_FUNC(unauthorized);
-STATUS_FUNC(bad_option);
-STATUS_FUNC(forbidden);
-STATUS_FUNC(not_found);
-STATUS_FUNC(method_not_allowed);
-STATUS_FUNC(not_accpetable);
-STATUS_FUNC(request_incomplete);
-STATUS_FUNC(precondition_failed);
-STATUS_FUNC(request_too_large);
-STATUS_FUNC(unsupported_format);
-
-STATUS_FUNC(internal_error);
-STATUS_FUNC(not_implemented);
-STATUS_FUNC(bad_gateway);
-STATUS_FUNC(service_unavailable);
-STATUS_FUNC(gateway_timeout);
-STATUS_FUNC(proxy_not_supported);
-
-
-
 
 static const struct luaL_Reg coap_funcs[] = {
     // { "resource", registerResource },
-    { "decode", lua_coap_parse}, // Parses a string into a table with extracted fields. 
-    { "encode", lua_coap_serialise}, // Parses a string into a table with extracted fields. 
-
-    // Convenience functions for creating responses with a certain code. 
-    { "emtpy", reply_empty },
-    { "created", reply_created },
-    { "deleted", reply_deleted },
-    { "valid", reply_valid },
-    { "changed", reply_changed },
-    { "content", reply_content },
-    { "continue", reply_continue },
-
-    { "bad_request", reply_bad_request },
-    { "unauthorized", reply_unauthorized },
-    { "bad_option", reply_bad_option },
-    { "forbidden", reply_forbidden },
-    { "not_found", reply_not_found },
-    { "method_not_allowed", reply_method_not_allowed },
-    { "not_accpetable", reply_not_accpetable },
-    { "request_incomplete", reply_request_incomplete },
-    { "precondition_failed", reply_precondition_failed },
-    { "request_too_large", reply_request_too_large },
-    { "unsupported_format", reply_unsupported_format },
-
-    { "internal_error", reply_internal_error },
-    { "not_implemented", reply_not_implemented },
-    { "bad_gateway", reply_bad_gateway },
-    { "service_unavailable", reply_service_unavailable },
-    { "gateway_timeout", reply_gateway_timeout },
-    { "proxy_not_supported", reply_proxy_not_supported },
-
-
-    // Block option value
-    { "block_opt", coap_block_opt},
+    { "decode", lua_decode}, // Parses a string into a table with extracted fields. 
+    { "encode", lua_encode}, // Turns a table back into a coap packet lstring
     { NULL, NULL }
 };
 

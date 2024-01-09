@@ -52,7 +52,6 @@ local function handle_fs_read(req)
         id = 0,
         size = 1024,
     }
-    log:info("Fetching", req.path_str, "block", block2.id, "@", block2.size)
     local path = "/"..req.path_str
 
     -- Allow for etag matching
@@ -84,7 +83,7 @@ local function handle_fs_read(req)
         f:close()
         req.reply{
             payload= d,
-            block2=coap.block_opt(block2.id, block2.size, block2.id < num_blocks-1)
+            block2={ id=block2.id, size=block2.size, more=block2.id < num_blocks-1}
         }
     else
         req.reply(coap.not_found())
@@ -141,10 +140,10 @@ local function handle_fs_write(req)
     end
 
     local resp = {
-        block1=req.reply(cbor.block_opt(block1.id, block1.size, block1.more))
+        block1=block1
     }
     if block1.more then
-        resp.code = req.reply_CODE_CONTINUE
+        resp.code = "continue"
     end
     return req.reply(resp);
 end
