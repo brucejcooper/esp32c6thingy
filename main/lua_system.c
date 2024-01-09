@@ -48,9 +48,7 @@ static const struct luaL_Reg system_funcs[] = {
 void lua_report_error(lua_State *L, int status, const char *prefix) {
     if (status == LUA_OK)
         return;
-
-    const char *msg = lua_tostring(L, -1);
-    ESP_LOGE(TAG, "%s: %s", prefix, msg);
+    ESP_LOGE(TAG, "%s: %s", prefix, lua_tostring(L, -1));
     lua_pop(L, 1);
 }
 

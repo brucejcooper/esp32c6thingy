@@ -43,12 +43,10 @@ local function tableContains(table, value)
     end
     return false
 end
-  
-
 
 ---Does a block wise fetch of a file from the filesystem
 ---@param req any The CoAP Request
----@return CoapResponse The One block of content from the file or an error code
+---@return any The One block of content from the file or an error code
 local function handle_fs_read(req)
     local block2 = req.block2 or {
         id = 0,
@@ -63,7 +61,7 @@ local function handle_fs_read(req)
         if not tableContains(req.if_match, etag) then
             -- The etag does not match any of the values supplied
             log:debug("Etag does not match supplied if-match - returning 'valid' response")
-            return coap.valid()
+            return req.reply(coap.valid())
         end
     end
 
@@ -75,7 +73,7 @@ local function handle_fs_read(req)
 
         if block2.id > num_blocks then
             log:debug("attempt to fetch block beyond end of file")
-            return coap.bad_option("BlockID2 index beyond block count of file")
+            return req.reply(coap.bad_option("BlockID2 index beyond block count of file"))
         end
 
         local offset = block2.id * block2.size
@@ -84,12 +82,12 @@ local function handle_fs_read(req)
         local d = f:read(block2.size)
         -- log:debug("Read", string.len(d))
         f:close()
-        return coap.response{
+        req.reply{
             payload= d,
             block2=coap.block_opt(block2.id, block2.size, block2.id < num_blocks-1)
         }
     else
-        return coap.not_found()
+        req.reply(coap.not_found())
     end
 end
 
@@ -105,7 +103,7 @@ local function handle_fs_write(req)
     local path = "/"..req.path_str
     if req.if_none_match and io.exists(path) then
         log:debug("File exists, but if-none-match was specified")
-        return coap.precondition_failed()
+        return req.reply(coap.precondition_failed())
     end
 
     if req.if_match then
@@ -113,7 +111,7 @@ local function handle_fs_write(req)
         if not tableContains(req.if_match, etag) then
             -- The etag does not match any of the values supplied
             log:debug("Etag does not match supplied if-match - Not overwriting")
-            return coap.precondition_failed()
+            return req.reply(coap.precondition_failed())
         end
     end
 
@@ -125,7 +123,7 @@ local function handle_fs_write(req)
     end
     local fp = io.open(path, mode)
     if not fp then
-        return coap.internal_error("Could not open file for writing")
+        return req.reply(cbor.internal_error("Could not open file for writing"))
     end
     local pos = fp:seek("end")
     local expectedPos = block1.id * block1.size
@@ -136,19 +134,19 @@ local function handle_fs_write(req)
     elseif pos > expectedPos then
         log:warn("Expected file to be", expectedPos, "but it was at", pos)
         fp:close()
-        return coap.not_accpetable("Block has already been written")
+        return req.reply(cbor.not_accpetable("Block has already been written"))
     else
         fp:write(req.payload)
         fp:close();
     end
 
-    local resp =  coap.response{
-        block1=coap.block_opt(block1.id, block1.size, block1.more)
+    local resp = {
+        block1=req.reply(cbor.block_opt(block1.id, block1.size, block1.more))
     }
     if block1.more then
-        resp.code = coap.CODE_CONTINUE
+        resp.code = req.reply_CODE_CONTINUE
     end
-    return resp;
+    return req.reply(resp);
 end
 
 local function handle_fs_delete(req)
@@ -159,13 +157,13 @@ local function handle_fs_delete(req)
         if not tableContains(req.if_match, etag) then
             -- The etag does not match any of the values supplied
             log:debug("Etag does not match supplied if-match - Not overwriting")
-            return coap.precondition_failed()
+            return req.reply(coap.precondition_failed())
         end
     end
 
     local ret, msg = os.remove(fname);
     if not ret then
-        return coap.not_found(msg);
+        return req.reply(coap.not_found(msg));
     end
 end
 
@@ -202,10 +200,10 @@ local function handle_list(req)
         end
     end
 
-    return coap.cbor_response{
+    return req.reply(coap.cbor_content{
         files=file_list,
         next=nextval
-    }
+    })
 end
 
 coap.resources["fs"]={

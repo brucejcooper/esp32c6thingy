@@ -1,5 +1,5 @@
 -- A sample init file that will be installed on a button like device.
--- require("init_ot") -- Start Openthread
+require("init_ot") -- Start Openthread
 require("file_server")
 require("button")
 require("button_actions")
