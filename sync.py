@@ -47,14 +47,6 @@ def readfile(f):
     with open(f, 'rb') as f:
         return f.read()
     
-async def sync(protocol, srcpath, ip, remote_files):
-    logging.info("Syncing directory %s", srcpath)
-    localfiles = [f for f in listdir(srcpath) if isfile(join(srcpath, f))]
-    num_changes = 0
-
-    # get the etags of all files on device
-    return num_changes
-
 
 
 async def main(args):
@@ -62,14 +54,9 @@ async def main(args):
     protocol = await Context.create_client_context()
     remote_files = (await call(protocol, args.ip, "fs", GET))['files']
 
-    with open(join(args.srcpath, "manifest.yml"), "r") as f:
-        manifest = yaml.safe_load(f)
+    srcpath = "/tmp/espcoap_tmp_img"
+    localfiles = [f for f in listdir(srcpath) if isfile(join(srcpath, f))]
 
-    localfiles = [args.ip.replace(':', '_') + ".lua"] # first one is special - We turn that into init.lua on the other end
-    localfiles.extend(manifest['common'])
-    localfiles.extend(manifest['device_classes'][args.device_class])
-    
-    
     try:
         num_changes = 0
         for idx, fname in enumerate(localfiles):
@@ -79,7 +66,7 @@ async def main(args):
                 remote_file = fname
 
             remote_etag = remote_files.get(remote_file, None)
-            content = readfile(join(args.srcpath,fname))
+            content = readfile(join(srcpath,fname))
             local_etag = get_etag(content)
 
             if remote_etag != local_etag:
@@ -103,6 +90,4 @@ parser = argparse.ArgumentParser(
                     description='Copies files from local directories onto COAP based devices',
                     epilog='copyright © 2024 mechination.com.au')
 parser.add_argument('ip')
-parser.add_argument('-c', '--class', dest="device_class", help="The class of device", default="dali_bridge")
-parser.add_argument('-s', '--src', dest="srcpath", help="The directory to sync from", default="./scripts")
 asyncio.run(main(parser.parse_args()))

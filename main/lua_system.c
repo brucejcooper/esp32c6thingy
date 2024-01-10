@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include <esp_timer.h>
 #include <esp_log.h>
+#include <esp_task_wdt.h>
 #include <string.h>
 #include <lua/lua.h>
 #include <lua/lauxlib.h>
@@ -196,6 +197,8 @@ ccpeed_err_t lua_execute_callback(int fnRef, int nArgs) {
 }
 
 static int restart_system(lua_State *L) {
+    esp_timer_deinit();
+    gpio_prepare_for_reset();
     esp_restart();
     return 0;
 }
@@ -283,7 +286,7 @@ int luaopen_system(lua_State *L) {
 }
 
 static void load_custom_libs(lua_State *L) {
-    
+
     luaL_requiref(L, "system", luaopen_system, true);
     lua_pop(L, 1);
     luaL_requiref(L, "gpio", luaopen_gpio, true);
@@ -315,7 +318,8 @@ void run_lua_loop() {
     assert(mutex);
 
 
-    xSemaphoreTake(mutex, portMAX_DELAY);
+
+    acquireLuaMutex();
 
     L = luaL_newstate();
     // lua_task_t *coro;
@@ -342,7 +346,7 @@ void run_lua_loop() {
             lua_report_error(L, r, "First Run Error");
         }
     }
-    xSemaphoreGive(mutex);
+    releaseLuaMutex();
 
     callback_queue = xQueueCreate(10, sizeof(lua_callback_t));
     assert(callback_queue);

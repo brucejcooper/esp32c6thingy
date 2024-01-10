@@ -5,5 +5,5 @@
 #include <lua/lauxlib.h>
 
 int luaopen_gpio(lua_State *L);
-
+void gpio_prepare_for_reset();
 #endif /* MAIN_GPIO_H_ */

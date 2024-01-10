@@ -3,9 +3,9 @@ local log = Logger:new("router")
 
 local function restart_handler(req)
     -- We run the restart in a separate task after a small delay so that the coroutine can return
-    system.start_task(function()
-        log:warn("COAP request to restart");
-        system.await({ timeout = 250 })
+    start_async_task(function()
+        log:warn("Restarting Device");
+        await(Future:defer(250))
         system.restart()
     end)
     req.reply(coap.changed())
@@ -57,6 +57,7 @@ function coap.cbor_content(content)
     }
 end
 
+-- All the possible COAP response codes - used to create helpers
 local response_codes = {
     "emtpy",
     "created",

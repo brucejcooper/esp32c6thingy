@@ -611,7 +611,7 @@ static int lua_encode(lua_State *L) {
     
     // |     27 | Block1           | [RFC7959] |
     lua_getfield(L, 1, "block1");
-    if (lua_isinteger(L, -1)) {
+    if (lua_istable(L, -1)) {
         int blockOpt;
         if ((blockOpt = coap_block_opt(L, -1)) < 0) {
             return 1;

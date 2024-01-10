@@ -10,6 +10,7 @@
 #define TAG "gpio"
 
 typedef struct {
+    gpio_int_type_t level;
     int pin;
     int handlerRef;
     int argRef;
@@ -133,25 +134,26 @@ static int set_pin_isr(lua_State *L) {
         return 1;
     }
 
-    interrupt_handler_info_t *ih = interrupt_handler_refs + pin;
-    if (ih->type != GPIO_INTR_DISABLE)  {
+    interrupt_handler_info_t *interrupt_handler = interrupt_handler_refs + pin;
+    if (interrupt_handler->type != GPIO_INTR_DISABLE)  {
         LUA_ESP_ERR_CHECK(gpio_intr_disable(pin));
         LUA_ESP_ERR_CHECK(gpio_isr_handler_remove(pin));
-        luaL_unref(L, LUA_REGISTRYINDEX, ih->argRef);
-        luaL_unref(L, LUA_REGISTRYINDEX, ih->handlerRef);
-        ih->pending = false;
+        luaL_unref(L, LUA_REGISTRYINDEX, interrupt_handler->argRef);
+        luaL_unref(L, LUA_REGISTRYINDEX, interrupt_handler->handlerRef);
+        interrupt_handler->pending = false;
     }
 
-    ih->type = inttype;
+    interrupt_handler->type = inttype;
     lua_pushvalue(L, 3);
-    ih->handlerRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    interrupt_handler->handlerRef = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_pushvalue(L, 4);
-    ih->argRef = luaL_ref(L, LUA_REGISTRYINDEX);
-    ih->pending = false;
+    interrupt_handler->argRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    interrupt_handler->pending = false;
+    interrupt_handler->level = inttype;
 
     LUA_ESP_ERR_CHECK(gpio_set_intr_type(pin, inttype));
     if (inttype != GPIO_INTR_DISABLE) {
-        LUA_ESP_ERR_CHECK(gpio_isr_handler_add(pin, gpio_isr, ih));
+        LUA_ESP_ERR_CHECK(gpio_isr_handler_add(pin, gpio_isr, interrupt_handler));
         LUA_ESP_ERR_CHECK(gpio_intr_enable(pin));
     }
 
@@ -165,6 +167,20 @@ static const struct luaL_Reg log_funcs[] = {
     { "set_pin_isr", set_pin_isr },
     { NULL, NULL }
 };
+
+void gpio_prepare_for_reset() {
+    ESP_LOGI(TAG, "Shutting down any active interrupt handlers");
+    interrupt_handler_info_t *ii = interrupt_handler_refs;
+    for (int i = 0; i < 32; i++, ii++) {
+        if (ii->level != GPIO_INTR_DISABLE) {
+            gpio_intr_disable(i);
+            gpio_set_intr_type(i, GPIO_INTR_DISABLE);            
+            gpio_isr_handler_remove(i);
+        }
+    }
+    gpio_uninstall_isr_service();
+    
+}
 
 int luaopen_gpio(lua_State *L)
 {
