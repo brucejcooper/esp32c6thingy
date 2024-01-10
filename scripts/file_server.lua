@@ -1,11 +1,12 @@
 require "router"
 
-local log = Logger:new("router")
+local log = Logger:get("router")
 
 
+local config = {}
 ---The maximum number of file items that will be returned in any one call to handle_list
 --- In other words, its the page size. 
-local MAX_LIST_ENTRIES = 20
+config.list_max_items = 20
 
 
 --- Calculates the file size of an open file_pointer
@@ -188,7 +189,7 @@ local function handle_list(req)
     local num_added = 0
     for i,fname in ipairs(filenames) do
         if fname >= startfrom then
-            if num_added > MAX_LIST_ENTRIES then
+            if num_added > config.list_max_items then
                 -- There are too many entries, and we run the risk of overflowing our packet size. Send a continuation token and return
                 nextval = fname
                 break
@@ -205,6 +206,7 @@ local function handle_list(req)
     })
 end
 
+-- Add some handlers to the coap server
 coap.resources["fs"]={
     get={
         handler=handle_list,
@@ -227,3 +229,5 @@ coap.pattern_resources["^fs/"]={
     }
 }
 
+-- Return the config so that it can be customised
+return config

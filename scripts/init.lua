@@ -2,7 +2,7 @@
 -- It will not start anything, and expects some third party process to alter it, then restart.  
 require("async")
 
-local log = Logger:new("main")
+local log = Logger:get("main")
 log:warn("This device is running in a default configuration")
 
 

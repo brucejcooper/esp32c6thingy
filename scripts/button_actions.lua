@@ -1,5 +1,5 @@
 
-local log=Logger:new("button_actions")
+local log=Logger:get("button_actions")
 
 ---handler to make a call to the target device via COAP.
 ---@param b Button The button that caused the action to occur

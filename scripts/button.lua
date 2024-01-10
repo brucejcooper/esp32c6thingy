@@ -4,7 +4,7 @@ require("async")
 -- Implementors can react to events by overriding the on_* methods. 
 Button = {}
 
-local log = Logger:new("button")
+local log = Logger:get("button")
 
 
 ---@class GpioFuture A GPIO specific future that will resolve when the specified pin goes to the supplied level. 

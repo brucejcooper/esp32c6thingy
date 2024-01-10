@@ -272,9 +272,7 @@ static int lua_patch_io(lua_State *L) {
     lua_pushstring(L, "exists");
     lua_pushcfunction(L, io_exists);
     lua_settable(L, -3);
-
     lua_pop(L, 1);
-
     return 1;
 }
 

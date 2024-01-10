@@ -64,6 +64,8 @@ typedef struct {
     otCoapBlockSzx block1_sz;
     bool block1_more;
 
+    int format;
+
     int block2_id;
     otCoapBlockSzx block2_sz;
     lstr_t payload;
@@ -73,16 +75,10 @@ typedef struct {
 
 
 typedef struct {
-    // otMessageInfo msg_info;
-    // Packet forming stuff - Shouldn'e be touched by handlers. 
     otCoapOptionType last_opt;
-    bool payload_started;
     uint8_t *ptr;
-
-    uint8_t response_buf[COAP_PACKET_SZ]; 
-    uint8_t *response_payload_start;
-    size_t payload_len;
-} coap_response_t;
+    uint8_t buf[COAP_PACKET_SZ]; 
+} coap_encoder_state_t;
 
 
 
@@ -123,6 +119,47 @@ static const code_lookup_t code_lookup[] = {
 };
 
 
+static const code_lookup_t type_lookup[] = {
+    {.sval="confirmable", .ival=OT_COAP_TYPE_CONFIRMABLE},
+    {.sval="non-confirmable", .ival=OT_COAP_TYPE_NON_CONFIRMABLE},
+    {.sval="ack", .ival=OT_COAP_TYPE_ACKNOWLEDGMENT},
+    {.sval="reset", .ival=OT_COAP_TYPE_RESET},
+    {.sval=NULL, .ival=0}
+};
+
+static const code_lookup_t format_lookup[] = {
+    
+    { .sval="text", .ival=OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN },
+    { .sval="cbor", .ival=OT_COAP_OPTION_CONTENT_FORMAT_CBOR },
+
+    { .sval="cose-encrypt0", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_ENCRYPT0 },
+    { .sval="cose-mac0", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_MAC0 },
+    { .sval="cose-sign1", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_SIGN1 },
+    { .sval="link-format", .ival=OT_COAP_OPTION_CONTENT_FORMAT_LINK_FORMAT },
+    { .sval="xml", .ival=OT_COAP_OPTION_CONTENT_FORMAT_XML },
+    { .sval="octet-stream", .ival=OT_COAP_OPTION_CONTENT_FORMAT_OCTET_STREAM },
+    { .sval="exi", .ival=OT_COAP_OPTION_CONTENT_FORMAT_EXI },
+    { .sval="json", .ival=OT_COAP_OPTION_CONTENT_FORMAT_JSON },
+    { .sval="json-patch+json", .ival=OT_COAP_OPTION_CONTENT_FORMAT_JSON_PATCH_JSON },
+    { .sval="merge-patch+json", .ival=OT_COAP_OPTION_CONTENT_FORMAT_MERGE_PATCH_JSON },
+    { .sval="cwt", .ival=OT_COAP_OPTION_CONTENT_FORMAT_CWT },
+    { .sval="cose-encrypt", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_ENCRYPT },
+    { .sval="cose-mac", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_MAC },
+    { .sval="cose-sign", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_SIGN },
+    { .sval="cose-key", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_KEY },
+    { .sval="cose-key-set", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COSE_KEY_SET },
+    { .sval="senml+json", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENML_JSON },
+    { .sval="sensml+json", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENSML_JSON },
+    { .sval="senml+cbor", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENML_CBOR },
+    { .sval="sensml+cbor", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENSML_CBOR },
+    { .sval="senml-exi", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENML_EXI },
+    { .sval="sensml-exi", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENSML_EXI },
+    { .sval="coap-group+json", .ival=OT_COAP_OPTION_CONTENT_FORMAT_COAP_GROUP_JSON },
+    { .sval="senml+xml", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENML_XML },
+    { .sval="sensml+xml", .ival=OT_COAP_OPTION_CONTENT_FORMAT_SENSML_XML },
+
+    {.sval=NULL, .ival=0}
+};
 
 
 
@@ -198,6 +235,7 @@ bool parse_coap_packet(coap_packet_t *pkt, const uint8_t *buf, size_t numRead) {
     ptr += 2;
     pkt->token.buf = (char *) ptr;
     ptr += pkt->token.len;
+    pkt->format = -1;
 
     if (pkt->version != 1) {
         ESP_LOGE(TAG, "Incorrect version in COAP header - Ignoring packet");
@@ -287,6 +325,8 @@ bool parse_coap_packet(coap_packet_t *pkt, const uint8_t *buf, size_t numRead) {
             case OT_COAP_OPTION_URI_PORT:
             case OT_COAP_OPTION_LOCATION_PATH:
             case OT_COAP_OPTION_CONTENT_FORMAT:
+                pkt->format = parseIntOpt(ptr, opt_len);
+                break;
             case OT_COAP_OPTION_MAX_AGE:
             case OT_COAP_OPTION_ACCEPT:
             case OT_COAP_OPTION_LOCATION_QUERY:
@@ -340,17 +380,16 @@ static inline uint8_t coap_opt_encode_len(size_t len, uint16_t *ex, size_t *exle
     return 14;
 }
 
-static inline size_t coap_response_space_remaining(coap_response_t *i) {
-    size_t used = i->ptr - i->response_buf;
-    return sizeof(i->response_buf) - used;
+static inline size_t coap_response_space_remaining(coap_encoder_state_t *i) {
+    size_t used = i->ptr - i->buf;
+    return sizeof(i->buf) - used;
 }
 
-
-static inline bool coap_response_check_space(coap_response_t *i, size_t sz) {
+static inline bool coap_response_check_space(coap_encoder_state_t *i, size_t sz) {
     return coap_response_space_remaining(i) >= sz;
 }
 
-static inline bool coap_response_check_space_option(coap_response_t *i, size_t optSize){ 
+static inline bool coap_response_check_space_option(coap_encoder_state_t *i, size_t optSize){ 
     size_t len = 1 + optSize;
     if (optSize >= 269) {
         len += 2;
@@ -362,13 +401,13 @@ static inline bool coap_response_check_space_option(coap_response_t *i, size_t o
 
 
 
-static ccpeed_err_t coap_response_append_option(coap_response_t *i, const otCoapOptionType type, const uint8_t *val, size_t val_len) {
+static ccpeed_err_t coap_response_append_option(coap_encoder_state_t *i, const otCoapOptionType type, const uint8_t *val, size_t val_len) {
     if (!coap_response_check_space_option(i, val_len)) {
         return CCPEED_ERROR_NOMEM;
     }
     int bDiff = type - i->last_opt;
 
-    if (bDiff < 0 || i->payload_started) {
+    if (bDiff < 0) {
         // options must be ever increasing. 
         return CCPEED_ERROR_INVALID;
     }
@@ -393,7 +432,7 @@ static ccpeed_err_t coap_response_append_option(coap_response_t *i, const otCoap
     return CCPEED_NO_ERR;
 }
 
-static ccpeed_err_t coap_response_append_uint_option(coap_response_t *i, const otCoapOptionType type, uint32_t val) {
+static ccpeed_err_t coap_response_append_uint_option(coap_encoder_state_t *i, const otCoapOptionType type, uint32_t val) {
     uint8_t buf[4];
     uint8_t *ptr = buf+3;
     int numBytes = 0;
@@ -414,16 +453,6 @@ static ccpeed_err_t coap_response_append_uint_option(coap_response_t *i, const o
 }
 
 
-
-
-
-bool coap_response_try_set_content_format(coap_response_t *i, otCoapOptionContentFormat fmt) {
-    if (!i->payload_started) {
-        return coap_response_append_uint_option(i, OT_COAP_OPTION_CONTENT_FORMAT, fmt) == CCPEED_NO_ERR;
-    } else {
-        return false;
-    }
-}
 
 
 void lua_push_lstr_arr(lua_State *L, lstr_arr_t *a) {
@@ -502,19 +531,57 @@ otCoapCode getRequestCode(lua_State *L, int argIdx) {
 
 
 
+bool lookup_from_field(lua_State *L, int idx, char *fieldname, const code_lookup_t *lookup, int *out, int default_value) {
+    lua_getfield(L, idx, fieldname);
+    int ty = lua_type(L, -1);
+    switch (ty) {
+        case LUA_TSTRING:
+            const char *str = lua_tostring(L, -1);
+            int ival = code_str_to_int(str, lookup);
+            if (ival < 0) {
+                luaL_error(L, "field %s value %s is invalid", fieldname, str);
+                break;
+            }
+            lua_pop(L, 1);
+            *out = ival;
+            return false;
+        case LUA_TNIL:
+            // -1 is treated as required, any other number (including negative) is treated as a default value, -2 can be used for "optional, but tell me if it isn't set"
+            if (default_value != -1) {
+                lua_pop(L, 1);
+                *out = default_value;
+                return false;
+            }
+            luaL_error(L, "field %s is required", fieldname);
+            break;
+        default:
+            luaL_error(L, "field %s has invalid type %s", fieldname, lua_type_str(L, -1));
+            break;
+    }
+    lua_pop(L, 1);
+    return true;
+}
+
+
+
 /**
  * Serialises a table representing a COAP message to a CoAP binary packet.
  */
 static int lua_encode(lua_State *L) {
-    coap_response_t resp;
+    coap_encoder_state_t resp;
 
     size_t tokensz;
     lua_getfield(L, 1, "token");
     const char *token = lua_tolstring(L, -1, &tokensz);
-    memcpy(resp.response_buf+4, token, tokensz);
+    memcpy(resp.buf+4, token, tokensz);
     lua_pop(L, 1);
 
-    resp.response_buf[0] = tokensz | OT_COAP_TYPE_ACKNOWLEDGMENT << 4 | 0x40;
+    int type;
+    if (lookup_from_field(L, 1, "type", type_lookup, &type, -1)) {
+        return 1;
+    }
+
+    resp.buf[0] = tokensz | type << 4 | 0x40;
     // A default (successful) code is set depending on the request method
 
 
@@ -524,44 +591,17 @@ static int lua_encode(lua_State *L) {
     lua_pop(L, 1);
 
 
-    resp.response_buf[2] = msgid >> 8;
-    resp.response_buf[3] = msgid & 0xFF;
+    resp.buf[2] = msgid >> 8;
+    resp.buf[3] = msgid & 0xFF;
 
     resp.last_opt = 0;
-    resp.ptr = resp.response_buf + 4 + tokensz;
-    resp.payload_started = false;
+    resp.ptr = resp.buf + 4 + tokensz;
 
-    otCoapCode req_code =  getRequestCode(L, 1);
-
-    // Set the code on the response, if present
-    lua_getfield(L, 1, "code");
-    if (lua_isstring(L, -1)) {
-        int ival = code_str_to_int(lua_tostring(L, -1), code_lookup);
-        if (ival == -1) {
-            luaL_argerror(L, 1, "response code is invlalid");
-        }
-        resp.response_buf[1] = ival;
-        ESP_LOGD(TAG, "Setting response code to 0x%02x", resp.response_buf[1]);
-    } else {
-        ESP_LOGD(TAG, "Inferring response code based on request code.");
-        switch (req_code) {
-            case OT_COAP_CODE_PUT:
-            case OT_COAP_CODE_POST:
-                resp.response_buf[1] = OT_COAP_CODE_CHANGED;
-                break;
-            case OT_COAP_CODE_DELETE:
-                resp.response_buf[1] = OT_COAP_CODE_DELETED;
-                break;
-            case OT_COAP_CODE_GET:
-                resp.response_buf[1] = OT_COAP_CODE_CONTENT;
-                break;
-            default:
-                luaL_error(L, "Request has illegal code");
-                return 1;
-
-        }
+    int code;
+    if (lookup_from_field(L, 1, "code", code_lookup, &code, -1)) {
+        return 1;
     }
-    lua_pop(L, 1);
+    resp.buf[1] = code;
 
     // Process options - remember they must be set in order
     // |      4 | ETag             | [RFC7252] |
@@ -575,19 +615,14 @@ static int lua_encode(lua_State *L) {
     lua_pop(L, 1);
 
     // |      8 | Location-Path    | [RFC7252] |
-
     // |     12 | Content-Format   | [RFC7252] |
-    lua_getfield(L, 1, "format");
-    if (lua_isstring(L, -1)) {
-        const char *fmtS = lua_tostring(L, -1);
-        ESP_LOGD(TAG, "Setting format to %s", fmtS);
-        otCoapOptionContentFormat fmt = OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN;
-        if (strcmp(fmtS, "cbor") == 0) {
-            fmt = OT_COAP_OPTION_CONTENT_FORMAT_CBOR;
-        }
+    int fmt;
+    if (lookup_from_field(L, -1, "format", format_lookup, &fmt, -2)) {
+        return 1;
+    }
+    if (fmt > 0) {
         coap_response_append_uint_option(&resp, OT_COAP_OPTION_CONTENT_FORMAT, fmt);
     }
-    lua_pop(L, 1);
 
     // |     14 | Max-Age          | [RFC7252] |
     // |     17 | Accept           | [RFC7252] |
@@ -634,7 +669,6 @@ static int lua_encode(lua_State *L) {
     ESP_LOGD(TAG, "Setting payload");
     switch (lua_type(L, -1)) {
         case LUA_TSTRING:
-            // coap_response_try_set_content_format(i, OT_COAP_OPTION_CONTENT_FORMAT_TEXT_PLAIN);
             size_t bodysz;
             uint8_t *body = (uint8_t *) lua_tolstring(L, -1, &bodysz);
             ESP_LOGV(TAG, "String body %d bytes: %s", bodysz, body);
@@ -646,9 +680,6 @@ static int lua_encode(lua_State *L) {
 
             // Append the content marker
             *resp.ptr++ = 0xFF;
-            resp.response_payload_start = resp.ptr;
-            resp.payload_started = true;
-
 
             // if we did in-place writing, we just want to move the pointer on
             memcpy(resp.ptr, body, bodysz);
@@ -664,9 +695,9 @@ static int lua_encode(lua_State *L) {
     }
     lua_pop(L, 1);
 
-    size_t sz = resp.ptr-resp.response_buf;
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, resp.response_buf, sz, ESP_LOG_VERBOSE);
-    lua_pushlstring(L, (char *) resp.response_buf, sz);
+    size_t sz = resp.ptr-resp.buf;
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, resp.buf, sz, ESP_LOG_VERBOSE);
+    lua_pushlstring(L, (char *) resp.buf, sz);
     return 1;
 }
 
@@ -682,14 +713,22 @@ static int lua_decode(lua_State *L) {
     const uint8_t *buf = (const uint8_t *) lua_tolstring(L, 1, &sz);
     if (parse_coap_packet(&req, buf, sz)) {
         lua_newtable(L);
-        // lua_pushstring(L, "msginfo");
-        // otMessageInfo *msgInfoCopy = lua_newuserdata(L, sizeof(otMessageInfo));
-        // memcpy(msgInfoCopy, msginfo, sizeof(otMessageInfo));
-        // lua_settable(L, -3);
+
+        lua_pushstring(L, "type");
+        lua_pushstring(L, code_int_to_str(req.type, type_lookup));
+        lua_settable(L, -3);
+
 
         lua_pushstring(L, "code");
         lua_pushstring(L, code_int_to_str(req.code, code_lookup));
         lua_settable(L, -3);
+
+        if (req.format != -1) {
+            lua_pushstring(L, "format");
+            lua_pushstring(L, code_int_to_str(req.format, format_lookup));
+            lua_settable(L, -3);
+        }
+
 
         lua_pushstring(L, "message_id");
         lua_pushinteger(L, req.message_id);
@@ -698,6 +737,8 @@ static int lua_decode(lua_State *L) {
         lua_pushstring(L, "token");
         lua_pushlstring(L, req.token.buf, req.token.len);
         lua_settable(L, -3);
+
+
 
         lua_pushstring(L, "path");
         lua_push_lstr_arr(L, &req.uri_path);

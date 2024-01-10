@@ -1,4 +1,4 @@
-local log = Logger:new("async")
+local log = Logger:get("async")
 
 ---@class Task
 ---Represents a mechanism for async await using coroutines.  Start a task by passing a function to start_async_task.

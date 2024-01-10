@@ -1,4 +1,4 @@
-local log = Logger:new("router")
+local log = Logger:get("router")
 
 
 local function restart_handler(req)
@@ -93,6 +93,20 @@ for i,code in ipairs(response_codes) do
 end
 
 
+local function get_log_level(req)
+    local tag = req.path_parameters[1]
+    log:info("Getting log level for ", tag)
+    req.reply(Logger:get(tag).level)
+end
+
+local function set_log_level(req)
+    local tag = req.path_parameters[1]
+    log:info("Setting log level for ", tag, "to", req.payload)
+    Logger:get(tag).level = req.payload
+    req.reply(coap.changed())
+end
+
+
 coap.resources = {
     restart= {
         post={
@@ -103,18 +117,29 @@ coap.resources = {
     info={
         get={
             handler=info_handler,
-            desc="fetches information about the device"
+            desc="fetches device info"
         }
     },
     -- This matches the root path (no path options supplied)
     [""]= {
         get={
             handler=list_resources_handler,
-            desc="lists all resource handlers that the device has"
+            desc="lists all resource handlers"
         }
     }
 }
-coap.pattern_resources = { }
+coap.pattern_resources = { 
+    ["^log/([^/]+)$"] = {
+        get={
+            handler=get_log_level,
+            desc="gets the log threshold"
+        },
+        put={
+            handler=set_log_level,
+            desc="sets the log threshold"
+        }
+    }
+}
 
 
 local function lookup(path)
@@ -124,8 +149,9 @@ local function lookup(path)
         return e
     else
         for pattern,methods in pairs(coap.pattern_resources) do
-            if (string.match(path, pattern)) then
-                return methods
+            local groups = {string.match(path, pattern)}
+            if groups[1] then
+                return methods, groups
             end
         end
     end
@@ -150,6 +176,7 @@ local sock = openthread:listen_udp(5683, function(self, dgram)
         if type(resp) ~= 'table' then
             resp = { payload=resp }
         end
+        resp.type = "ack"
         -- Copy message_id and token from the request
         resp.token = req.token
         resp.message_id = req.message_id
@@ -173,11 +200,12 @@ local sock = openthread:listen_udp(5683, function(self, dgram)
     end
 
     req.path_str = table.concat(req.path, "/")
-    local methods = lookup(req.path_str)
+    local methods, groups = lookup(req.path_str)
     if methods then
         local operation = methods[req.code]
         if operation then
-            log:info("invoking operation", operation.desc)
+            req.path_parameters = groups
+            log:debug("invoking operation", operation.desc)
             local success, res = pcall(operation.handler, req)
             if success then
                 if not req.replied then
@@ -196,3 +224,6 @@ local sock = openthread:listen_udp(5683, function(self, dgram)
     log:warn("No path matches", req.path_str)
     req.reply(coap.not_found())
 end)
+
+-- Return the socket in case somebody wants to close it later.
+return sock

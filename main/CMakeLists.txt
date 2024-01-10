@@ -1,3 +1,4 @@
+
 idf_component_register(SRCS 
                     "main.c" 
                     "dali_driver.c" 
@@ -14,3 +15,4 @@ idf_component_register(SRCS
                     INCLUDE_DIRS "."
                     EMBED_TXTFILES certs/coap_ca.pem certs/coap_server.crt certs/coap_server.key)
 
+target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLOG_LOCAL_LEVEL=ESP_LOG_VERBOSE")

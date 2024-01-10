@@ -2,7 +2,7 @@
 
 Dali = {}
 
-local log = Logger:new("dali")
+local log = Logger:get("dali")
 
 ---transforms a logical gear address into the value transmitted for DALI commands.
 ---@param logical_address integer between 0 and 63 inclusive indicating the logical address of the gear.

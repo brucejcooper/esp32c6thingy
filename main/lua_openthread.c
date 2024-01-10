@@ -434,6 +434,9 @@ static int udp_reply(lua_State *L) {
     const char *msg = lua_tolstring(L, 2, &sz);
 
     lua_getfield(L, 1, "msgInfo");
+    ESP_LOGD(TAG, "Sending UDP Reply");
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, msg, sz, ESP_LOG_DEBUG);
+
     otMessageInfo *msgInfo = (otMessageInfo *) lua_touserdata(L, -1);
     otInstance *instance = esp_openthread_get_instance();
 
@@ -469,6 +472,9 @@ void udpCallback(void *aContext, otMessage *aMessage, const otMessageInfo *aMess
     lua_newtable(L);
     lua_pushstring(L, "body");
     bufsz = otMessageRead(aMessage, 0, buf, sizeof(buf));
+
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, buf, bufsz, ESP_LOG_DEBUG);
+
     lua_pushlstring(L, (char *) buf, bufsz);
     lua_settable(L, -3);
 
