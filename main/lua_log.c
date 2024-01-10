@@ -192,7 +192,6 @@ static int log_attrgetter(lua_State *L) {
         lua_getfield(L, 1, "tag");
         const char *tag = lua_tostring(L, -1);
         esp_log_level_t lvl = esp_log_level_get(tag);
-        ESP_LOGI(TAG, "Log level for tag %s is %d", tag, lvl);
         lua_pushstring(L, code_int_to_str(lvl, log_level_lookup));
     } else {
         luaL_argerror(L, 2, "invalid key");

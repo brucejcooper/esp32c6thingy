@@ -20,5 +20,15 @@ function Helpers.table_to_string(t)
     return ret.."}"
 end
 
+function Helpers.hexlify(s)
+    local len = string.len(s)
+    local parts = {}
+    for i=1,len do
+        table.insert(parts, string.format("%02X", string.byte(s, i)))
+    end
+    return table.concat(parts)
+end
+
+
 
 return Helpers

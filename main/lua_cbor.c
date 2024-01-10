@@ -1,3 +1,6 @@
+#undef LOG_LOCAL_LEVEL
+#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
+
 #include "lua_cbor.h"
 #include "lua_system.h"
 #include <lua/lua.h>
@@ -13,42 +16,41 @@ typedef struct {
     int ival;
 } str_type_pair_t;
 
-static const str_type_pair_t hint_mappings[] = {
-    { "int", CborIntegerType },
-    { "double", CborDoubleType },
-    { "float", CborFloatType },
-    { "bstr", CborByteStringType },
-    { "str", CborTextStringType },
-    { "array", CborArrayType },
-    { "map", CborMapType },
-    { "bool", CborBooleanType },
-    { "tag", CborTagType },
-    { NULL, CborInvalidType }
+static const code_lookup_t hint_mappings[] = {
+    { .sval="int", .ival=CborIntegerType },
+    { .sval="double", .ival=CborDoubleType },
+    { .sval="float", .ival=CborFloatType },
+    { .sval="bstr", .ival=CborByteStringType },
+    { .sval="str", .ival=CborTextStringType },
+    { .sval="array", .ival=CborArrayType },
+    { .sval="map", .ival=CborMapType },
+    { .sval="bool", .ival=CborBooleanType },
+    { .sval="tag", .ival=CborTagType },
+    { .sval=NULL, .ival=CborInvalidType }
 };
 
 static CborType to_typehint(lua_State *L, int pos) {
-    const char *val = lua_tostring(L, pos);
-    if (val) {
-        for (str_type_pair_t *ptr = (str_type_pair_t *) hint_mappings; ptr->strval != NULL; ptr++) {
-            if (strcmp(ptr->strval, val) == 0) {
-                return ptr->ival;
-            }
+    const char *s = lua_tostring(L, pos);
+    if (s) {
+        int ival = code_str_to_int(s, hint_mappings);
+        if (ival >= 0) {
+            return ival;
         }
     }
     return CborInvalidType;
 }
 
-static CborError encode_luaval(lua_State *L, CborEncoder *enc, CborType typehint, bool strict);
+static CborError encode_luaval(lua_State *L, int stackPos, CborEncoder *enc, uint8_t *buf, CborType typehint, bool strict);
 
 
 
-static CborError encode_lua_sequence(lua_State *L, CborEncoder *enc, bool strict) {
+static CborError encode_lua_sequence(lua_State *L, int stackPos, CborEncoder *enc, uint8_t *buf, bool strict) {
     CborError err;
     CborEncoder objectEnc;
 
     CborType typeHint = CborInvalidType;
-    if (lua_getmetatable(L, -1)) {
-        lua_getfield(L, -1, "__enc");
+    if (lua_getmetatable(L, stackPos)) {
+        lua_getfield(L, stackPos, "__valenc");
         typeHint = to_typehint(L, -1);
         lua_pop(L, 2);
     }
@@ -56,10 +58,10 @@ static CborError encode_lua_sequence(lua_State *L, CborEncoder *enc, bool strict
     err = cbor_encoder_create_array(enc, &objectEnc, CborIndefiniteLength);
     int i = 1;
     do {
-        lua_geti(L, -1, i++);
+        lua_geti(L, stackPos, i++);
         if (!lua_isnil(L, -1)) {
             // Encode the value. 
-            err = encode_luaval(L, &objectEnc, typeHint, strict);
+            err = encode_luaval(L, -1, &objectEnc, buf, typeHint, strict);
             if (err != CborNoError) {
                 lua_pop(L, 2);
                 return err;
@@ -76,100 +78,117 @@ static CborError encode_lua_sequence(lua_State *L, CborEncoder *enc, bool strict
 
 
 
-static CborError encode_lua_table(lua_State *L, CborEncoder *enc, CborType typehint, bool strict) {
+static CborError encode_lua_table(lua_State *L, int stackPos, CborEncoder *enc, uint8_t *buf, CborType typehint, bool strict) {
     CborError err;
     CborEncoder objectEnc;
 
+    int tableStackPos = lua_absindex(L, stackPos);
+    int valueHintType = LUA_TNIL;
 
-    // If the table has an item at key 1, treat it as an array
-    CborType keyHint = CborInvalidType;
-    CborType valHint = CborInvalidType;
-    if (lua_getmetatable(L, -1)) {
+    if (lua_getmetatable(L, tableStackPos)) {
         lua_getfield(L, -1, "__keyenc");
-        keyHint = to_typehint(L, -1);
-        lua_pop(L, 1); 
-
-        lua_getfield(L, -1, "__valenc");
-        valHint = to_typehint(L, -1);
-        lua_pop(L, 1);
+        lua_getfield(L, -2, "__valenc");
+        valueHintType = lua_type(L, -1);
 
         // If it wasn't explicitly specified, see if there's an __enc for this to turn it into an array
         if (typehint == CborInvalidType) {
-            lua_getfield(L, -1, "__enc");
+            lua_getfield(L, -3, "__enc");
             typehint = to_typehint(L, -1);
             lua_pop(L, 1);
         }
-        lua_pop(L, 1);
+        lua_remove(L, -3); // Remove the metadata table.
+    } else {
+        lua_pushnil(L); // No key hint
+        lua_pushnil(L); // No value hint
+        valueHintType = LUA_TNIL;
     }
 
+
     if (typehint == CborArrayType) {
-        return encode_lua_sequence(L, enc, strict);
+        lua_pop(L, 2); // We don't need the hints.
+        return encode_lua_sequence(L, tableStackPos, enc, buf, strict);
     }
 
     err = cbor_encoder_create_map(enc, &objectEnc, CborIndefiniteLength);
     if (err != CborNoError) {
         return err;
     }
-    ESP_LOGD(TAG, "Encoding LUA table to CBOR using keyHint %d and valHint %d", keyHint, valHint);
 
     lua_pushnil(L);
-    while (lua_next(L, -2)) {
-        // CBOR doesn't care what the key is, but be sensible.
-        lua_pushvalue(L, -2); // copy the key to the top of the stack
-        err = encode_luaval(L, &objectEnc, keyHint, strict);
+    ESP_LOGD(TAG, "Dumping a table, value pos is %d", tableStackPos);
+    while (lua_next(L, tableStackPos)) {
+        // CBOR doesn't care what the key is, but be sensible.  Be careful not to call lua_tostring() because this messes up the key if it isn't already a string
+
+        CborType keyHint = to_typehint(L, -4);
+        err = encode_luaval(L, -2, &objectEnc, buf, keyHint, strict);
         if (err != CborNoError) {
-            lua_pop(L, 2);
+            ESP_LOGE(TAG, "Error encoding key: %s", cbor_error_string(err));
+            lua_pop(L, 4);
             return err;
         }
-        lua_pop(L, 1);
-        // Encode the value. 
-        err = encode_luaval(L, &objectEnc, valHint, strict);
+        ESP_LOGD(TAG, "Key hint is %d", keyHint);
+
+        // Encode the value.  Hint will depend on value from metatable. 
+        CborType valHint;
+        if (valueHintType == LUA_TTABLE) {
+            // Look up the key in the hint table. 
+            lua_getfield(L, -3, lua_tostring(L, -2));
+            valHint = to_typehint(L, -1);
+            lua_pop(L, 1);
+        } else {
+            valHint = to_typehint(L, -3);
+        }
+        ESP_LOGD(TAG, "Value hint is %d", keyHint);
+
+        err = encode_luaval(L, -1,  &objectEnc, buf, valHint, strict);
         if (err != CborNoError) {
-            ESP_LOGE(TAG, "Error encoding value for key %s: %s", lua_tostring(L, -2), cbor_error_string(err));
-            lua_pop(L, 2);
+            ESP_LOGE(TAG, "Error encoding value for key: %s", cbor_error_string(err));
+            lua_pop(L, 4);
             return err;
         }
         lua_pop(L, 1); // Only pop the value.  Leave the key for the iterator.
-        ESP_LOGV(TAG, "Next iter");
+
     }
     err = cbor_encoder_close_container(enc, &objectEnc);
+
+    lua_pop(L, 2); // the two hints.
     return err;
 }
 
 
-static CborError encode_luaval(lua_State *L, CborEncoder *enc, CborType typehint, bool strict) {
+static CborError encode_luaval(lua_State *L, int stackPos, CborEncoder *enc,  uint8_t *buf, CborType typehint, bool strict) {
     CborError err = CborErrorImproperValue;
 
-    switch (lua_type(L, -1)) {
+    switch (lua_type(L, stackPos)) {
         case LUA_TBOOLEAN:
             ESP_LOGD(TAG, "Encoding boolean");
-            err = cbor_encode_boolean(enc, lua_toboolean(L, -1));
+            err = cbor_encode_boolean(enc, lua_toboolean(L, stackPos));
             break;
         case LUA_TNUMBER:
             if (typehint == CborInvalidType) {
                 // Infer a type
-                if (lua_isinteger(L, -1)) {
+                if (lua_isinteger(L, stackPos)) {
                     typehint = CborIntegerType;
                 }
             }
             switch (typehint) {
                 case CborIntegerType:
                     ESP_LOGD(TAG, "Encoding Integer");
-                    err = cbor_encode_int(enc, lua_tointeger(L, -1));
+                    err = cbor_encode_int(enc, lua_tointeger(L, stackPos));
                     break;
                 case CborFloatType:
                     ESP_LOGD(TAG, "Encoding Float");
-                    err = cbor_encode_float(enc, lua_tonumber(L, -1));
+                    err = cbor_encode_float(enc, lua_tonumber(L, stackPos));
                     break;
                 default:
                     ESP_LOGD(TAG, "Encoding Double");
-                    err = cbor_encode_double(enc, lua_tonumber(L, -1));
+                    err = cbor_encode_double(enc, lua_tonumber(L, stackPos));
                     break;
             }
             break;
         case LUA_TSTRING:
             size_t sz;
-            const char *txt = lua_tolstring(L, -1, &sz);
+            const char *txt = lua_tolstring(L, stackPos, &sz);
             switch (typehint) {
                 case CborByteStringType:
                     ESP_LOGD(TAG, "Encoding Byte String");
@@ -184,7 +203,7 @@ static CborError encode_luaval(lua_State *L, CborEncoder *enc, CborType typehint
             break;
 
         case LUA_TTABLE:
-            err = encode_lua_table(L, enc, typehint, strict);
+            err = encode_lua_table(L, stackPos, enc, buf, typehint, strict);
             break;
         
         // These are unsupported and will throw an error. 
@@ -192,7 +211,7 @@ static CborError encode_luaval(lua_State *L, CborEncoder *enc, CborType typehint
         case LUA_TUSERDATA:
         case LUA_TLIGHTUSERDATA:
         case LUA_TTHREAD:
-            ESP_LOGE(TAG, "Attempt to serialise non supported value of type %s", lua_type_str(L, -1));
+            ESP_LOGE(TAG, "Attempt to serialise non supported value of type %s", lua_type_str(L, stackPos));
             return CborErrorIllegalType;
             // Fall through
         case LUA_TNIL:
@@ -209,6 +228,7 @@ int lua_cbor_encode(lua_State *L) {
     uint8_t buf[1024];
     CborEncoder enc;
 
+
     int nArgs = lua_gettop(L);
     if (nArgs > 1) {
         // Second optional argument is the typehint for the top level object. Useful if its not a table with metadata (e.g. a number)
@@ -217,7 +237,7 @@ int lua_cbor_encode(lua_State *L) {
     }
 
     cbor_encoder_init(&enc, buf, sizeof(buf), 0);
-    CborError err = encode_luaval(L, &enc, typeHint, false);
+    CborError err = encode_luaval(L, -1, &enc, buf, typeHint, false);
     if (err != CborNoError) {
         luaL_error(L, err == CborErrorIllegalType ? "Attempt to encode invalid value" :  cbor_error_string(err));
         return 1;

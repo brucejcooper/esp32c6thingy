@@ -143,7 +143,8 @@ local function handle_fs_write(req)
     local resp = {
         block1=req.block1
     }
-    if req.block1.more then
+
+    if req.block1 and req.block1.more then
         resp.code = "continue"
     end
     return req.reply(resp);

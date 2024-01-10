@@ -79,10 +79,18 @@ void srp_server_callback(const otSockAddr *aServerSockAddr, void *aContext) {
 }
 
 
-void register_srp(otNetifAddress *addr)
+
+static int start_srp(lua_State *L) {
+    ESP_LOGI(TAG, "Enabling SRP Service registration");
+    otInstance *instance = esp_openthread_get_instance();
+    return 0;
+}
+
+
+static void register_srp(otNetifAddress *addr)
 {
     ESP_LOGI(TAG, "Enabling SRP Service registration");
-    // otInstance *instance = esp_openthread_get_instance();
+    otInstance *instance = esp_openthread_get_instance();
 
     // otSrpClientSetHostName(instance, defaultMacStr);
     // otSrpClientSetHostAddresses(instance, &addr->mAddress, 1);
@@ -102,7 +110,6 @@ void register_srp(otNetifAddress *addr)
     // };
     // otSrpClientAddService(instance, &service);
     // otSrpClientEnableAutoStartMode(instance, srp_server_callback, NULL);
-
 }
 
 
@@ -118,9 +125,9 @@ static void ipAddressChangeCallback(const otIp6AddressInfo *aAddressInfo, bool a
             if (addr->mAddressOrigin != OT_ADDRESS_ORIGIN_THREAD) {
                 otIp6AddressToString(&(addr->mAddress), buf, OT_IP6_ADDRESS_STRING_SIZE);
                 ESP_LOGI(TAG, "External IP Address %s/%d", buf, addr->mPrefixLength);
-                // if (!otSrpClientIsRunning(instance)) {
-                //     register_srp(addr);
-                // }
+                if (!otSrpClientIsRunning(instance)) {
+                    register_srp(addr);
+                }
             }
             addr = (otNetifAddress *) addr->mNext;
         }

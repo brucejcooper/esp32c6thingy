@@ -19,7 +19,6 @@
 
 #include <driver/uart.h>
 
-#include <esp_mac.h>
 #include "esp_vfs_eventfd.h"
 
 #include "lua_system.h"
@@ -27,9 +26,6 @@
 
 const static char *TAG = "CCPEED Device";
 
-
-static uint8_t defaultMac[8];
-static char defaultMacStr[17];
 
 void app_main(void) {
     esp_vfs_eventfd_config_t eventfd_config = {
@@ -39,7 +35,9 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_vfs_eventfd_register(&eventfd_config));
-    ESP_ERROR_CHECK(esp_efuse_mac_get_default(defaultMac));
+
+    esp_log_level_set("cbor", ESP_LOG_DEBUG);
+
 
     esp_vfs_spiffs_conf_t conf = {
       .base_path = "/fs",
@@ -68,13 +66,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
-    }
-
-
-
-    char *ptr = defaultMacStr;
-    for (int i = 0; i < 8; i++) {
-        ptr += sprintf(ptr, "%02x", defaultMac[i]);
     }
 
     run_lua_loop();

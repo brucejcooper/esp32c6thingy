@@ -1,8 +1,17 @@
--- A sample init file that will be installed on a button like device.
+-- -- A sample init file that will be installed on a button like device.
 require("init_ot") -- Start Openthread
 require("file_server")
 require("button")
 require("button_actions")
+require("helpers")
+
+local log = Logger:get("main")
+
+
+log:info(string.format("Firmware %s version %s, built at %s %s", system.firmware.project, system.firmware.version, system.firmware.date, system.firmware.time))
+log:info("ESP idf version", system.firmware.idf_ver)
+log:info("MAC Address is", Helpers.hexlify(system.mac_address))
+
 
 --This device has 5 buttons
 Button:new{
@@ -35,3 +44,4 @@ Button:new{
     on_click=toggle_device,
     on_long_press=dim_device
 }
+

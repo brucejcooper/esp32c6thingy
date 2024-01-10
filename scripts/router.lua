@@ -1,5 +1,7 @@
 local log = Logger:get("router")
 
+require("async")
+
 
 local function restart_handler(req)
     -- We run the restart in a separate task after a small delay so that the coroutine can return
@@ -11,13 +13,8 @@ local function restart_handler(req)
     req.reply(coap.changed())
 end
 
-local function info_handler(req)
-    req.reply(coap.cbor_content{
-        ver="dev",
-        uptime=os.clock()
-    });
-end
 
+--- Makes a deep copy of a table, so that we can mess with it without messing with the original. 
 local function copy_table(t, into)
     local c = into or {}
     for k, v in pairs(t) do
@@ -29,6 +26,28 @@ local function copy_table(t, into)
     end
     return c
 end
+
+
+local function info_handler(req)
+
+    local fw = system.firmware
+    -- lazily give the cbor serialiser hints for how to serialise the binary sha256 field
+    local system_meta = getmetatable(fw)
+    if not system_meta then
+        setmetatable(fw, { __valenc= {sha256='bstr'} })
+    end
+
+    local info = {
+        esp_idf_ver=system.esp_idf_ver,
+        uptime=os.clock(),
+        mac_address=system.mac_address,
+        reset_reason=system.reset_reason,
+        firmware= fw
+    }
+    setmetatable(info, { __valenc={ mac_address='bstr' }})
+    req.reply(coap.cbor_content(info));
+end
+
 
 ---Lists all the resource paths that this device has registered
 ---@return table

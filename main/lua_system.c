@@ -4,6 +4,9 @@
 #include <freertos/semphr.h>
 #include <driver/gpio.h>
 #include <esp_timer.h>
+#include <esp_idf_version.h>
+#include <esp_system.h>
+#include <esp_app_desc.h>
 #include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <string.h>
@@ -12,6 +15,7 @@
 #include <lua/lualib.h>
 #include <stdint.h>
 #include "dali_driver.h"
+#include <esp_mac.h>
 
 #include "lua_system.h"
 #include "lua_gpio.h"
@@ -72,6 +76,26 @@ static const char *type_names[] = {
 };
 
 
+static const code_lookup_t reset_reason_lookup[] = {
+    {.sval="power_on", .ival=RESET_REASON_CHIP_POWER_ON},
+    {.sval="software", .ival=RESET_REASON_CORE_SW},
+    {.sval="deep_sleep", .ival=RESET_REASON_CORE_DEEP_SLEEP},
+    {.sval="mwdt0", .ival=RESET_REASON_CORE_MWDT0},
+    {.sval="rtc_wdt", .ival=RESET_REASON_CORE_RTC_WDT},
+    {.sval="cpu0_mwdt0", .ival=RESET_REASON_CPU0_MWDT0},
+    {.sval="cpu0_software", .ival=RESET_REASON_CPU0_SW},
+    {.sval="cpu0_rtc", .ival=RESET_REASON_CPU0_RTC_WDT},
+    {.sval="brown_out", .ival=RESET_REASON_SYS_BROWN_OUT},
+    {.sval="rtc_wdt", .ival=RESET_REASON_SYS_RTC_WDT},
+    {.sval="super_wdt", .ival=RESET_REASON_SYS_SUPER_WDT},
+    // {.sval="clock glitch", .ival=RESET_REASON_SYS_CLK_GLITCH},
+    {.sval="efuse crc", .ival=RESET_REASON_CORE_EFUSE_CRC},
+    {.sval="jtag", .ival=RESET_REASON_CPU0_JTAG},
+    {.sval=NULL, .ival=-1}
+
+};
+
+
 
 void schedule_callback_from_ISR(lua_callback_helper_t fn, void *ctx) {
     lua_callback_t cb = {
@@ -82,9 +106,7 @@ void schedule_callback_from_ISR(lua_callback_helper_t fn, void *ctx) {
 
     // If the task queue fills up, panic
     assert(xQueueSendFromISR(callback_queue, &cb, &higherPriorityTaskWoken) == pdTRUE);
-    if (higherPriorityTaskWoken == pdTRUE) {
-        portYIELD_FROM_ISR();
-    }
+    portYIELD_FROM_ISR(higherPriorityTaskWoken);
 }
 
 
@@ -277,8 +299,57 @@ static int lua_patch_io(lua_State *L) {
 }
 
 
+
+
 int luaopen_system(lua_State *L) {
     luaL_newlib(L, system_funcs);
+
+    // Set a default_mac string on the system object.
+    lua_pushstring(L, "mac_address");
+    static uint8_t defaultMac[8];
+    ESP_ERROR_CHECK(esp_efuse_mac_get_default(defaultMac));
+    lua_pushlstring(L, (char *) defaultMac, sizeof(defaultMac));
+    lua_settable(L, -3);
+
+
+    lua_pushstring(L, "reset_reason");
+    lua_pushstring(L, code_int_to_str(esp_reset_reason(), reset_reason_lookup));
+    lua_settable(L, -3);
+
+    
+
+    lua_pushstring(L, "firmware");
+    const esp_app_desc_t *appdesc = esp_app_get_description();
+    lua_newtable(L);
+    lua_pushstring(L, "project");
+    lua_pushstring(L, appdesc->project_name);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "version");
+    lua_pushstring(L, appdesc->version);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "idf_ver");
+    lua_pushstring(L, appdesc->idf_ver);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "date");
+    lua_pushstring(L, appdesc->date);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "time");
+    lua_pushstring(L, appdesc->time);
+    lua_settable(L, -3);
+
+
+    lua_pushstring(L, "sha256");
+    lua_pushlstring(L, (const char *) appdesc->app_elf_sha256, sizeof(appdesc->app_elf_sha256));
+    lua_settable(L, -3);
+
+    lua_settable(L, -3);
+
+
+
     lua_patch_io(L);
     return 1;
 }
@@ -287,6 +358,10 @@ static void load_custom_libs(lua_State *L) {
 
     luaL_requiref(L, "system", luaopen_system, true);
     lua_pop(L, 1);
+
+
+
+
     luaL_requiref(L, "gpio", luaopen_gpio, true);
     lua_pop(L, 1);
     luaL_requiref(L, "coap", luaopen_coap, true);
