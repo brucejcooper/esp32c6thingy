@@ -83,11 +83,11 @@ typedef struct {
 
 
 static const code_lookup_t code_lookup[] = {
-    {.sval="empty", .ival=OT_COAP_CODE_EMPTY},
-    { .sval="get", .ival=OT_COAP_CODE_GET},
-    { .sval="post", .ival=OT_COAP_CODE_POST},
-    { .sval="put", .ival=OT_COAP_CODE_PUT},
-    { .sval="delete", .ival=OT_COAP_CODE_DELETE},
+    {.sval="empty", .ival=0},
+    { .sval="get", .ival=1},
+    { .sval="post", .ival=2},
+    { .sval="put", .ival=3},
+    { .sval="delete", .ival=4},
 
     { .sval="success", .ival=OT_COAP_CODE_RESPONSE_MIN},
     { .sval="created", .ival=OT_COAP_CODE_CREATED},
@@ -479,6 +479,7 @@ int coap_block_opt(lua_State *L, int argidx) {
 
     lua_getfield(L, argidx, "size");
     int size = lua_tointeger(L, -1);
+    ESP_LOGI(TAG, "Specified size is %d", size);
     lua_pop(L, 1);
 
     lua_getfield(L, argidx, "more");
@@ -502,7 +503,7 @@ int coap_block_opt(lua_State *L, int argidx) {
     } else if (size == 1024) {
         sizex = 6;
     } else {
-        luaL_argerror(L, 1, "Invalid size value");
+        luaL_error(L, "Invalid size value %d", size);
         return -1;
     }
     uint32_t val = id << 4 | sizex;
@@ -666,7 +667,6 @@ static int lua_encode(lua_State *L) {
 
     // Options are done.  Now its a matter of putting out the payload
     lua_getfield(L, 1, "payload");
-    ESP_LOGD(TAG, "Setting payload");
     switch (lua_type(L, -1)) {
         case LUA_TSTRING:
             size_t bodysz;
@@ -690,7 +690,7 @@ static int lua_encode(lua_State *L) {
             // Nothing to append.
             break;
         default:
-            luaL_argerror(L, 1, "Payload must be a string or nil");
+            luaL_argerror(L, 1, "field payload must be a string or nil");
             return 1;
     }
     lua_pop(L, 1);

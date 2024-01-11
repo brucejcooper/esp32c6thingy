@@ -21,12 +21,56 @@ static const code_lookup_t log_level_lookup[] = {
     {.sval = NULL, .ival=-1}
 };
 
-static inline int copy_string(char *buf, char *val, int remain) {
-    int sz = strlen(val);
-    if (remain > sz) {
-        memcpy(buf, val, sz);
+typedef struct {
+    char *buf;
+    char *ptr;
+    size_t remain;
+} str_appender_t;
+
+static bool strbuf_appendstr(str_appender_t *strbuf, const char *msg) {
+    size_t len = strlen(msg);
+    if (len >= strbuf->remain) {
+        len = strbuf->remain;
     }
-    return sz;
+    if (len > 0) {
+        memcpy(strbuf->ptr, msg, len);
+        strbuf->remain -= len;
+        strbuf->ptr+= len;
+        *strbuf->ptr = 0;
+    }
+    return strbuf->remain > 0;
+}
+
+static bool strbuf_appendnumber(str_appender_t *strbuf, lua_State *L, int arg) {
+    size_t n;
+    if (lua_isinteger(L, arg)) {
+        n = snprintf(strbuf->ptr, strbuf->remain, "%lld", lua_tointeger(L, arg));
+    } else {
+        n = snprintf(strbuf->ptr, strbuf->remain, "%lf", lua_tonumber(L, arg));
+    }       
+    if (n < strbuf->remain) {
+        strbuf->ptr+= n;
+        strbuf->remain -= n;
+        return true;
+    } else {
+        strbuf->ptr+= strbuf->remain;
+        strbuf->remain = 0;
+        return false;
+    }
+}
+
+static bool strbuf_appendval(str_appender_t *strbuf, lua_State *L, int arg) {
+    int valtype = lua_type(L,arg);
+    if (valtype == LUA_TSTRING) {
+        strbuf_appendstr(strbuf, "\"");
+        strbuf_appendstr(strbuf, lua_tostring(L, arg));
+        return strbuf_appendstr(strbuf, "\"");
+    } else if (valtype == LUA_TNUMBER) {
+        return strbuf_appendnumber(strbuf, L, arg);
+    } else {
+        return strbuf_appendstr(strbuf, lua_type_str(L, arg));
+    }
+
 }
 
 static int do_log(lua_State *L, int log_level) {   
@@ -41,58 +85,54 @@ static int do_log(lua_State *L, int log_level) {
     esp_log_level_t tag_level = esp_log_level_get(tag);
     if (log_level <= tag_level) {
         char buf[1024];
-        char *bufptr = buf;
-        int remain = sizeof(buf);
-
+        str_appender_t sbuf = {
+            .buf = buf,
+            .ptr = buf,
+            .remain = sizeof(buf)-1
+        };
 
         int nargs = lua_gettop(L);
         for (int arg = 2; arg < nargs; arg++) {
             if (arg != 2) {
-                *bufptr++ = '\t';
-                remain--;
+                strbuf_appendstr(&sbuf, "\t");
             }
-            int sz;
             int ty = lua_type(L, arg);
             switch (ty) {
                 case LUA_TSTRING:
-                    char *strval = (char *) lua_tolstring(L, arg, (size_t *) &sz);
-                    if (remain > sz) {
-                        memcpy(bufptr, strval, sz);
-                    }
+                    strbuf_appendstr(&sbuf, lua_tostring(L, arg));
                     break;
                 case LUA_TBOOLEAN:
-                    sz = copy_string(bufptr, lua_toboolean(L, arg) ? "true": "false", remain);
+                    strbuf_appendstr(&sbuf, lua_toboolean(L, arg) ? "true": "false");
                     break;
                 case LUA_TNUMBER:
-                    if (lua_isinteger(L, arg)) {
-                        sz = snprintf(bufptr, remain, "%lld", lua_tointeger(L, arg));
-                    } else {
-                        sz = snprintf(bufptr, remain, "%lf", lua_tonumber(L, arg));
-                    }                
+                    strbuf_appendnumber(&sbuf, L, arg);
                     break;
 
                 case LUA_TTABLE:
-                    sz = snprintf(bufptr, remain, "table(%p)", lua_topointer(L, arg));
-
+                    strbuf_appendstr(&sbuf, "{");    
+                    int count = 0;
+                    lua_pushnil(L);
+                    while (lua_next(L, arg)) {
+                        if (count++) {
+                            strbuf_appendstr(&sbuf, ",");
+                        }
+                        strbuf_appendval(&sbuf, L, -2);
+                        strbuf_appendstr(&sbuf, "=");
+                        strbuf_appendval(&sbuf, L, -1);
+                        lua_pop(L, 1);
+                    }
+                    strbuf_appendstr(&sbuf, "}");
                     break;
 
                 case LUA_TNIL:
-                    sz = copy_string(bufptr, "NIL", remain);
+                    strbuf_appendstr(&sbuf, "nil");
                     break;
 
                 default:
-                    sz = snprintf(bufptr, remain, "UNK%d", ty);
+                    strbuf_appendstr(&sbuf, "unknown");
                     break;
             }
-            if (sz >= remain) {
-                luaL_argerror(L, arg, "No more space in log buffer");
-                return 1;
-            }
-            bufptr += sz;
-            remain -= sz;
         }
-        // Trailing 0
-        *bufptr = 0;
 
         ESP_LOG_LEVEL(log_level, tag, "%s", buf);
     }

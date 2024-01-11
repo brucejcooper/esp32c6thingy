@@ -208,14 +208,14 @@ local function handle_list(req)
 end
 
 -- Add some handlers to the coap server
-coap.resources["fs"]={
+coap.resources[{"fs"}]={
     get={
         handler=handle_list,
         desc="lists all files on the device's filesystem"
     }
 }
 
-coap.pattern_resources["^fs/"]={
+coap.resources[{"fs", "*"}]={
     get={
         handler=handle_fs_read,
         desc="reads a file"

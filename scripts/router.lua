@@ -1,80 +1,12 @@
 local log = Logger:get("router")
 
 require("async")
+require("helpers")
 
 
-local function restart_handler(req)
-    -- We run the restart in a separate task after a small delay so that the coroutine can return
-    start_async_task(function()
-        log:warn("Restarting Device");
-        await(Future:defer(250))
-        system.restart()
-    end)
-    req.reply(coap.changed())
-end
+coap.resources = {}
 
 
---- Makes a deep copy of a table, so that we can mess with it without messing with the original. 
-local function copy_table(t, into)
-    local c = into or {}
-    for k, v in pairs(t) do
-        if type(v) == 'table' then
-            c[k] = copy_table(v)
-        else
-            c[k] = v
-        end
-    end
-    return c
-end
-
-
-local function info_handler(req)
-
-    local fw = system.firmware
-    -- lazily give the cbor serialiser hints for how to serialise the binary sha256 field
-    local system_meta = getmetatable(fw)
-    if not system_meta then
-        setmetatable(fw, { __valenc= {sha256='bstr'} })
-    end
-
-    local info = {
-        esp_idf_ver=system.esp_idf_ver,
-        uptime=os.clock(),
-        mac_address=system.mac_address,
-        reset_reason=system.reset_reason,
-        firmware= fw
-    }
-    setmetatable(info, { __valenc={ mac_address='bstr' }})
-    req.reply(coap.cbor_content(info));
-end
-
-
----Lists all the resource paths that this device has registered
----@return table
-local function list_resources_handler(req)
-    local resourceList = copy_table(coap.resources)
-    -- Also add the pattern resources
-    copy_table(coap.pattern_resources, resourceList)
-
-    -- before we return, change each of the objects in the copy from the handler/desc pair into just the description
-    for path, methods in pairs(resourceList) do
-        for method, operation in pairs(methods) do
-            methods[method] = operation.desc or "No description"
-        end
-    end
-
-    req.reply(coap.cbor_content(resourceList));
-end
-
-
----Convenience function for encoding some data as cbor, then wrapping it in a CoAP response
-function coap.cbor_content(content)
-    return {
-        code="content",
-        format="cbor",
-        payload=cbor.encode(content)
-    }
-end
 
 -- All the possible COAP response codes - used to create helpers
 local response_codes = {
@@ -112,66 +44,264 @@ for i,code in ipairs(response_codes) do
 end
 
 
-local function get_log_level(req)
-    local tag = req.path_parameters[1]
-    log:info("Getting log level for ", tag)
-    req.reply(Logger:get(tag).level)
+function coap.make_code(major,minor)
+    return (major << 5) + minor
 end
 
-local function set_log_level(req)
-    local tag = req.path_parameters[1]
-    log:info("Setting log level for ", tag, "to", req.payload)
-    Logger:get(tag).level = req.payload
-    req.reply(coap.changed())
+coap.codes = {
+    [coap.make_code(0, 0)]= 'empty',
+    [coap.make_code(0,1)] = "get",
+    [coap.make_code(0,2)] = "post",
+    [coap.make_code(0,3)] = "put",
+    [coap.make_code(0,4)] = "delete",
+    
+    [coap.make_code(2,0)] = "response_min",
+    [coap.make_code(2,1)] = "created",
+    [coap.make_code(2,2)] = "deleted",
+    [coap.make_code(2,3)] = "valid",
+    [coap.make_code(2,4)] = "changed",
+    [coap.make_code(2,5)] = "content",
+    [coap.make_code(2,31)] = "continue",
+    
+    [coap.make_code(4,0)] = "bad_request",
+    [coap.make_code(4,1)] = "unauthorized",
+    [coap.make_code(4,2)] = "bad_option",
+    [coap.make_code(4,3)] = "forbidden",
+    [coap.make_code(4,4)] = "not_found",
+    [coap.make_code(4,5)] = "method_not_allowed",
+    [coap.make_code(4,6)] = "not_accpetable",
+    [coap.make_code(4,8)] = "request_incomplete",
+    [coap.make_code(4,12)] = "precondition_failed",
+    [coap.make_code(4,13)] = "request_too_large",
+    [coap.make_code(4,15)] = "unsupported_format",
+    
+    [coap.make_code(5,0)] = "internal_error",
+    [coap.make_code(5,1)] = "not_implemented",
+    [coap.make_code(5,2)] = "bad_gateway",
+    [coap.make_code(5,3)] = "service_unavailable",
+    [coap.make_code(5,4)] = "gateway_timeout",
+    [coap.make_code(5,5)] = "proxy_not_supported",
+}
+
+coap.types = {
+    "confirmable",
+    "non-confirmable",
+    "ack",
+    "reset"
+}
+
+
+local function parse_opt_singleton(packet, opt_name, val)
+    if packet[opt_name] then
+        error(string.format("singleton option %s appears more than once", opt_name))
+    end
+    packet[opt_name] = val
+end
+
+local function parse_opt_many(packet, opt_name, val)
+    local list = packet[opt_name]
+    if not list then
+        list = {}
+        packet[opt_name] = list
+    end
+    table.insert(list, val)
 end
 
 
-coap.resources = {
-    restart= {
-        post={
-            handler=restart_handler,
-            desc="restarts device"
-        }
-    },
-    info={
-        get={
-            handler=info_handler,
-            desc="fetches device info"
-        }
-    },
-    -- This matches the root path (no path options supplied)
-    [""]= {
-        get={
-            handler=list_resources_handler,
-            desc="lists all resource handlers"
-        }
-    }
-}
-coap.pattern_resources = { 
-    ["^log/([^/]+)$"] = {
-        get={
-            handler=get_log_level,
-            desc="gets the log threshold"
-        },
-        put={
-            handler=set_log_level,
-            desc="sets the log threshold"
-        }
-    }
-}
+local function bstr_to_int(bstr)
+    local val = 0
+    for i,v in ipairs({string.byte(bstr, 1, string.len(bstr))}) do
+        val = val << 8 | v
+    end
+    return val
+end
 
+
+local function parse_opt_block(packet, opt_name, val)
+    if packet[opt_name] then
+        error(string.format("singleton option %s appears more than once", opt_name))
+    end
+
+    local ival = bstr_to_int(val)
+    local more = false
+    if ival & 0x08 then
+        more = true
+    end
+    packet[opt_name] = {
+        id=ival >> 4,
+        size=1 << (4 + (ival & 0x07)),
+        more=more
+    }
+end
+
+
+coap.options = {
+    [1]={ sval="if_match", parse=parse_opt_many},
+    [3]={ sval="uri_host", parse=parse_opt_many},
+    [4]={ sval="e_tag", parse=parse_opt_singleton},
+    [5]={ sval="if_none_match", parse=parse_opt_singleton},
+    [6]={ sval="observe", parse=parse_opt_many},
+    [7]={ sval="uri_port", parse=parse_opt_many},
+    [8]={ sval="location_path", parse=parse_opt_many},
+    [11]={ sval="path", parse=parse_opt_many},
+    [12]={ sval="format", parse=parse_opt_singleton},
+    [14]={ sval="max_age", parse=parse_opt_many},
+    [15]={ sval="query", parse=parse_opt_many},
+    [17]={ sval="accept", parse=parse_opt_many},
+    [20]={ sval="location_query", parse=parse_opt_many},
+    [23]={ sval="block2", parse=parse_opt_block},
+    [27]={ sval="block1", parse=parse_opt_block},
+    [28]={ sval="size2", parse=parse_opt_many},
+    [35]={ sval="proxy_uri", parse=parse_opt_many},
+    [39]={ sval="proxy_scheme", parse=parse_opt_many},
+    [60]={ sval="size1", parse=parse_opt_many},
+}
+-- Also put in reverse mapping.  Make a copy first so that the iterator doesn't get discombobulated
+for opt_n, opt_meta in pairs(Helpers.assign(coap.options)) do
+    coap.options[opt_meta.sval] = { id=opt_n }
+end
+
+
+
+local CoAPReader = {}
+CoAPReader.__index = CoAPReader
+function CoAPReader:new(b)
+    local r = {
+        buf= b,
+        pos=1,
+        last_opt = 0
+    }
+    setmetatable(r, self)
+    return r
+end
+
+function CoAPReader:u8()
+    assert(type(self) == 'table')
+    local b = string.byte(self.buf, self.pos)
+    self.pos = self.pos + 1
+    return b
+end
+
+function CoAPReader:bytes(n)
+    local b = string.sub(self.buf, self.pos, self.pos+n-1)
+    self.pos = self.pos + n
+    return b
+end
+
+function CoAPReader:u16()
+    local b1, b2 = string.byte(self.buf, self.pos, self.pos+1)
+    self.pos = self.pos + 2
+    return b1 << 8 | b2;
+end
+
+function CoAPReader:opt()
+    local b = self:u8()
+    if b == 0xFF then 
+        self.payload_marker_parsed = true
+        return nil, nil
+    end
+    if b == nil then
+        -- We just ran out of bytes
+        return nil, nil
+    end
+    local delta = b >> 4
+    local sz = (b & 0x0F)
+
+    if delta == 15 or sz == 15 then
+        error("invalid coap delta/size")
+    end
+
+    if delta == 13 then
+        delta = 13 + self:u8()
+    elseif delta == 14 then
+        delta = 269 + self:u16()
+    end
+
+    if sz == 13 then
+        sz = 13 + self:u8()
+    elseif sz == 14 then
+        sz = 269 + self:u16()
+    end
+    self.last_opt = self.last_opt + delta
+    local opt_meta = coap.options[self.last_opt]
+    if not opt_meta then
+        error("Unknown option type")
+    end
+    if sz == 0 then
+        return opt_meta
+    else
+        return opt_meta, self:bytes(sz)
+    end
+end
+
+function CoAPReader:remainder()
+    return string.sub(self.buf, self.pos)
+end
+
+
+
+function coap.parse_packet(buf)
+
+    local r = CoAPReader:new(buf)
+
+    local firstbyte = r:u8()
+    local version=firstbyte >> 6
+    assert(version == 1, "Invalid CoAP version")
+    local code_num = r:u8()
+    local code = coap.codes[code_num]
+    assert(code, "Invalid code")
+
+    local token_len = firstbyte & 0x0F;
+    log:debug("Parsing CoAP request first byte is", firstbyte, "token length", token_len, "code is", code);
+    local packet = {
+        type=coap.types[(firstbyte >>4) & 0x03];
+        code=code,
+        message_id=r:u16(),
+        token=r:bytes(token_len),
+        path={},
+    }
+    local opt, opt_data = r:opt()
+    while opt do
+        log:debug("Processing option ", opt.sval, opt_data)
+        opt.parse(packet, opt.sval, opt_data)
+        opt, opt_data = r:opt()
+    end
+
+    if r.payload_marker_parsed then
+        packet.payload = r:remainder()
+    end
+    return packet
+end
+
+
+
+local function paths_match(path_seq, route_seq)
+
+    for i, cand_e in ipairs(route_seq) do
+        local path_e = path_seq[i]
+        if not path_e then
+            return false
+        end
+        log:debug("comparing candidate element", cand_e, "to path", path_e)
+        if cand_e == "**" then
+            return true
+        elseif not (cand_e == "*" or (string.match(cand_e, "^^") and string.match(path_e, cand_e)) or cand_e == path_e) then
+            return false
+        end
+    end
+    -- Lengths must match (except for ** which was handled in the loop)
+    return #path_seq == #route_seq
+end
 
 local function lookup(path)
     log:debug("looking for handler for path", path)
-    local e = coap.resources[path]
-    if e then
-        return e
-    else
-        for pattern,methods in pairs(coap.pattern_resources) do
-            local groups = {string.match(path, pattern)}
-            if groups[1] then
-                return methods, groups
-            end
+    for route, methods in pairs(coap.resources) do
+        log:debug("Testing path", route, "against request", path)
+        if paths_match(path, route) then
+            log:debug("Path matches")
+            return methods
+        else
+            log:debug("Path does not match")
         end
     end
 end
@@ -189,7 +319,9 @@ end
 ---@param dgram table an object with a body string that represents the received datagram 
 ---@return any what will be sent back to the caller.  May be nil, a string, or a table
 local sock = openthread:listen_udp(5683, function(self, dgram)
-    local req = coap.decode(dgram.body);
+    local req = coap.parse_packet(dgram.body)
+    -- log:debug("DGRAM", Helpers.hexlify(dgram.body), "packet", req.block2)
+
     req.reply = function(resp)
         -- Wrap the respone, if it isn't already in the right format.
         if type(resp) ~= 'table' then
@@ -219,13 +351,15 @@ local sock = openthread:listen_udp(5683, function(self, dgram)
     end
 
     req.path_str = table.concat(req.path, "/")
-    local methods, groups = lookup(req.path_str)
+    local methods = lookup(req.path)
     if methods then
         local operation = methods[req.code]
         if operation then
-            req.path_parameters = groups
             log:debug("invoking operation", operation.desc)
-            local success, res = pcall(operation.handler, req)
+            local success, res = xpcall(operation.handler, function(err)
+                -- Send the traceback along with the error
+                return debug.traceback(err, 2)
+            end, req)
             if success then
                 if not req.replied then
                     log:warn("Handler did not reply.  Message will not be responded to")
@@ -234,8 +368,8 @@ local sock = openthread:listen_udp(5683, function(self, dgram)
                     log:warn("Handler returned a value, but we don't do anything with it")
                 end
             else
-                log:error(res, debug.traceback(res))
                 req.reply(coap.internal_error(res))
+                log:error("Error processing request:", res)
             end
             return
         end

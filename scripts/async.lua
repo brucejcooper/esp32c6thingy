@@ -12,6 +12,7 @@ Task.__index = Task
 
 
 ---@class Future an object that will have its value set at some point in the future.  Tasks may await futures.
+---@field on_set function callback which is called when the value is set
 Future = {}
 Future.__index = Future
 

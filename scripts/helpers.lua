@@ -2,6 +2,7 @@
 Helpers = {}
 
 function Helpers.table_to_string(t)
+    assert(type(t) == 'table', "expected table")
     local sep = "{"
     local ret = ""
 
@@ -27,6 +28,17 @@ function Helpers.hexlify(s)
         table.insert(parts, string.format("%02X", string.byte(s, i)))
     end
     return table.concat(parts)
+end
+
+
+--- Makes a deep copy of a table, so that we can mess with it without messing with the original. 
+function Helpers.assign(t, into)
+    assert(type(t) == 'table', "expected table")
+    local c = into or {}
+    for k, v in pairs(t) do
+        c[k] = v
+    end
+    return c
 end
 
 

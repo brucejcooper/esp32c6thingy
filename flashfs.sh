@@ -8,7 +8,7 @@ IP="fdbf:1afc:5480:1:30a3:bef2:6c55:fccd"
 rm -rf $DIR
 mkdir $DIR
 # Copy default files. 
-cp scripts/{init,init_ot,file_server,router,async,helpers}.lua $DIR
+cp scripts/{init,init_ot,file_server,router,async,helpers,default_handlers}.lua $DIR
 
 case $1 in
     bridge)
@@ -20,7 +20,7 @@ case $1 in
         echo "Configuring Switch"
         cp scripts/{button,button_actions}.lua $DIR
         cp scripts/init_buttons.lua $DIR/init.lua
-        PORT=/dev/tty.usbserial-1130
+        PORT=/dev/tty.usbserial-11130
         IP="fdbf:1afc:5480:1:8a08:4ae9:e400:964d"
         ;;
     *)
