@@ -3,7 +3,6 @@ idf_component_register(SRCS
                     "main.c" 
                     "dali_driver.c" 
                     "lua_system.c"
-                    "lua_coap.c"
                     "lua_dali.c"
                     "lua_log.c"
                     "lua_gpio.c"

@@ -42,5 +42,37 @@ function Helpers.assign(t, into)
 end
 
 
+Lookup = {}
+Lookup.__index=function(table, key)
+    local kt = type(key)
+    local val
+    if kt == 'string' then
+        val = table.by_str[key]
+    elseif kt == 'number' then
+        val = table.by_int[key]
+    else
+        error("index lookup must be a string or integer in the table")
+    end
+    if not val then
+        error(string.format("Key %s not found in lookup table", key))
+    end
+    return val
+end
+
+function Lookup:new(items)
+    local f = {
+        by_int={},
+        by_str={}
+    }
+    setmetatable(f, self)
+    for i, entry in ipairs(items) do
+        f.by_int[entry.i] = entry.s
+        f.by_str[entry.s] = entry.i
+    end
+    return f
+end
+
+
+
 
 return Helpers

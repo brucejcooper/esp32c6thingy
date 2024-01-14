@@ -1,6 +1,6 @@
 -- -- A sample init file that will be installed on a button like device.
 require("init_ot") -- Start Openthread
-require("router")
+require("coap")
 require("default_handlers")
 require("file_server")
 require("button")

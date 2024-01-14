@@ -19,7 +19,6 @@
 
 #include "lua_system.h"
 #include "lua_gpio.h"
-#include "lua_coap.h"
 #include "lua_log.h"
 #include "lua_dali.h"
 #include "lua_digest.h"
@@ -33,6 +32,7 @@
 
 // static int await(lua_State *L);
 static int restart_system(lua_State *L);
+static int get_heap(lua_State *L);
 
 
 
@@ -46,6 +46,7 @@ typedef struct {
 static const struct luaL_Reg system_funcs[] = {
     // { "start_task", start_task },
     { "restart", restart_system },
+    { "heap_info", get_heap },
     { NULL, NULL }
 };
 
@@ -225,7 +226,24 @@ static int restart_system(lua_State *L) {
     return 0;
 }
 
+static int get_heap(lua_State *L) {
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
 
+    lua_newtable(L);
+    lua_pushstring(L, "free");
+    lua_pushinteger(L, info.total_free_bytes);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "min_free");
+    lua_pushinteger(L, info.minimum_free_bytes);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "total_allocated");
+    lua_pushinteger(L, info.total_allocated_bytes);
+    lua_settable(L, -3);
+    return 1;
+}
 
 
 bool get_int(lua_State *L, const char *fname, int *out, int default_value) {
@@ -363,8 +381,6 @@ static void load_custom_libs(lua_State *L) {
 
 
     luaL_requiref(L, "gpio", luaopen_gpio, true);
-    lua_pop(L, 1);
-    luaL_requiref(L, "coap", luaopen_coap, true);
     lua_pop(L, 1);
     luaL_requiref(L, "Logger", luaopen_logger, true);
     lua_pop(L, 1);

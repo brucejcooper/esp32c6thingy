@@ -16,5 +16,10 @@
         "await",
         "start_async_task",
         "Timer",
-    ]
+    ],
+    "files.associations": {
+        "lua_openthread.h": "c",
+        "dataset_ftd.h": "c",
+        "coap.h": "c"
+    }
 }

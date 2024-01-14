@@ -95,8 +95,8 @@ end
 
 ---Creates a future that will be set after a specified delay (unless cancelled first)
 ---@param timeout integer the number of milliseconds that the future will be deferred for
----@param value any the value that the future will be set to when the timer goes off
----@param reuseable_timer Timer By default, the future will create and delete a new timer each time.  To make things more efficiennt, you can pass in a reusable timer that will be re-used
+---@param value any? the value that the future will be set to when the timer goes off
+---@param reuseable_timer Timer? By default, the future will create and delete a new timer each time.  To make things more efficiennt, you can pass in a reusable timer that will be re-used
 function Future:defer(timeout, value, reuseable_timer)
     local timer
     local reusable = false

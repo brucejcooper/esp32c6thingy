@@ -4,16 +4,6 @@ require("helpers")
 local log = Logger:get("default_handlers")
 
 
-
----Convenience function for encoding some data as cbor, then wrapping it in a CoAP response
-function coap.cbor_content(content)
-    return {
-        code="content",
-        format="cbor",
-        payload=cbor.encode(content)
-    }
-end
-
 function cbor.encode_values_as(src, hints) 
     -- Make a shallow copy of the table
     local copy = Helpers.assign(src, {})
@@ -33,7 +23,7 @@ coap.resources[{"restart"}] = {
                 await(Future:defer(250))
                 system.restart()
             end)
-            req.reply(coap.changed())
+            req.reply{ code="changed" }
         end
     }
 }
@@ -48,9 +38,10 @@ coap.resources[{"info"}]={
                 uptime=os.clock(),
                 mac_address=system.mac_address,
                 reset_reason=system.reset_reason,
+                heap=system.heap_info(),
                 firmware= cbor.encode_values_as(system.firmware, { sha256='bstr' })
             }
-            req.reply(coap.cbor_content(cbor.encode_values_as(info, { mac_address='bstr' })));
+            req.reply{ code="content", format="cbor", payload=cbor.encode(cbor.encode_values_as(info, { mac_address='bstr' }))};
         end
     }
 }
@@ -71,7 +62,7 @@ coap.resources[{}]= {
                 end
                 table.insert(resourceList, r)
             end
-            req.reply(coap.cbor_content(resourceList));
+            req.reply{ code="content", format="cboar", payload=cbor.encode(resourceList)};
         end
     }
 }
@@ -91,8 +82,21 @@ coap.resources[{"log", "*"}] = {
             local tag = req.path[2]
             log:info("Setting log level for ", tag, "to", req.payload)
             Logger:get(tag).level = req.payload
-            req.reply(coap.changed())
+            req.reply{ code="changed" }
         end
     }
 }
 
+
+coap.resources[{"test"}] = {
+    get={
+        desc="test encoding",
+        handler=function(req)
+            req.reply{
+                code="content",
+                format="cbor",
+                payload=cbor.encode("blah")
+            }
+        end
+    }
+}

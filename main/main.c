@@ -22,7 +22,6 @@
 #include "esp_vfs_eventfd.h"
 
 #include "lua_system.h"
-#include "lua_coap.h"
 
 const static char *TAG = "CCPEED Device";
 

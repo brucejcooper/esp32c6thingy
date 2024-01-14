@@ -8,7 +8,7 @@ IP="fdbf:1afc:5480:1:30a3:bef2:6c55:fccd"
 rm -rf $DIR
 mkdir $DIR
 # Copy default files. 
-cp scripts/{init,init_ot,file_server,router,async,helpers,default_handlers}.lua $DIR
+cp scripts/{init,init_ot,file_server,coap,async,helpers,default_handlers}.lua $DIR
 
 case $1 in
     bridge)

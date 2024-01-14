@@ -65,15 +65,15 @@ end
 function Dali:parse_addr(req, fn)
     local logical_addr = tonumber(req.path[2])
     if not logical_addr then
-        return coap.bad_request()
+        req.reply{ code="bad_request"}
     end
 
     if not self.registered_gear_addresses[logical_addr] then
-        return coap.not_found()
+        req.reply{ code="not_found"}
     end
     local response = fn(self, req, logical_addr)
     if getmetatable(response) ~= coap then
-        return coap.cbor_response(response)
+        req.reply{ code="response", format="cbor", payload=cbor.encode(response)}
     else
         return response
     end
@@ -108,7 +108,7 @@ function Dali:handle_list_devices(req)
         table.insert(devices, id)
     end
 
-    return coap.cbor_response(devices)
+    req.reply{ code="response", format="cbor", payload=cbor.encode(devices)}
 end
 
 

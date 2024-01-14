@@ -1,6 +1,6 @@
-require "router"
+require "coap"
 
-local log = Logger:get("router")
+local log = Logger:get("files")
 
 
 local config = {}
@@ -61,7 +61,7 @@ local function handle_fs_read(req)
         if not tableContains(req.if_match, etag) then
             -- The etag does not match any of the values supplied
             log:debug("Etag does not match supplied if-match - returning 'valid' response")
-            return req.reply(coap.valid())
+            return req.reply{ code="valid" }
         end
     end
 
@@ -73,7 +73,7 @@ local function handle_fs_read(req)
 
         if block2.id > num_blocks then
             log:debug("attempt to fetch block beyond end of file")
-            return req.reply(coap.bad_option("BlockID2 index beyond block count of file"))
+            return req.reply{ code="bad_option", payload="BlockID2 index beyond block count of file"}
         end
 
         local offset = block2.id * block2.size
@@ -87,7 +87,7 @@ local function handle_fs_read(req)
             block2={ id=block2.id, size=block2.size, more=block2.id < num_blocks-1}
         }
     else
-        req.reply(coap.not_found())
+        req.reply{ code="not_found" }
     end
 end
 
@@ -103,7 +103,7 @@ local function handle_fs_write(req)
     local path = "/"..req.path_str
     if req.if_none_match and io.exists(path) then
         log:debug("File exists, but if-none-match was specified")
-        return req.reply(coap.precondition_failed())
+        return req.reply{ code="precondition_failed" }
     end
 
     if req.if_match then
@@ -111,7 +111,7 @@ local function handle_fs_write(req)
         if not tableContains(req.if_match, etag) then
             -- The etag does not match any of the values supplied
             log:debug("Etag does not match supplied if-match - Not overwriting")
-            return req.reply(coap.precondition_failed())
+            return req.reply{ code="precondition_failed" }
         end
     end
 
@@ -158,13 +158,13 @@ local function handle_fs_delete(req)
         if not tableContains(req.if_match, etag) then
             -- The etag does not match any of the values supplied
             log:debug("Etag does not match supplied if-match - Not overwriting")
-            return req.reply(coap.precondition_failed())
+            return req.reply{ code="precondition_failed"}
         end
     end
 
     local ret, msg = os.remove(fname);
     if not ret then
-        return req.reply(coap.not_found(msg));
+        return req.reply{ code="not_found", payload="msg"}
     end
 end
 
@@ -201,10 +201,14 @@ local function handle_list(req)
         end
     end
 
-    return req.reply(coap.cbor_content{
-        files=file_list,
-        next=nextval
-    })
+    return req.reply{ 
+        code="content",
+        format="cbor",
+        payload=cbor.encode{
+            files=file_list,
+            next=nextval
+        }
+    }
 end
 
 -- Add some handlers to the coap server

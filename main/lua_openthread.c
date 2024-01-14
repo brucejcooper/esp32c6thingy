@@ -23,14 +23,12 @@
 #include <openthread/udp.h>
 #include <openthread/thread.h>
 #include <openthread/icmp6.h>
-#include <openthread/coap.h>
 #include <openthread/tasklet.h>
 #include <openthread/dataset_ftd.h>
 
 #include "esp_vfs_eventfd.h"
 
 
-#include "lua_coap.h"
 #include "lua_system.h"
 
 #define TAG "openthread"
