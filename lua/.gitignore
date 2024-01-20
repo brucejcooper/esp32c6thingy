@@ -1,0 +1,2 @@
+devices/*/*.key
+shared/init_ot.lua

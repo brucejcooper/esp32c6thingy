@@ -1,3 +1,6 @@
 [submodule "components/esp-idf-lua"]
 	path = components/esp-idf-lua
 	url = https://github.com/UncleRus/esp-idf-lua.git
+[submodule "firmware/components/esp-idf-lua"]
+	path = firmware/components/esp-idf-lua
+	url = https://github.com/UncleRus/esp-idf-lua.git

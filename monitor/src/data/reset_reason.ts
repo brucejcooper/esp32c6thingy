@@ -1,0 +1,15 @@
+export type ResetReason =
+    | "power_on"
+    | "software"
+    | "deep_sleep"
+    | "mwdt0"
+    | "rtc_wdt"
+    | "cpu0_mwdt0"
+    | "cpu0_software"
+    | "cpu0_rtc"
+    | "brown_out"
+    | "rtc_wdt"
+    | "super_wdt"
+    | "clock glitch"
+    | "efuse crc"
+    | "jtag";
