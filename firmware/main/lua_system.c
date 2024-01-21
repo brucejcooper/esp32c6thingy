@@ -14,7 +14,6 @@
 #include <lua/lauxlib.h>
 #include <lua/lualib.h>
 #include <stdint.h>
-#include "dali_driver.h"
 #include <esp_mac.h>
 
 #include "lua_system.h"
@@ -23,6 +22,7 @@
 #include "lua_dali.h"
 #include "lua_digest.h"
 #include "lua_timer.h"
+#include "lua_crypto.h"
 #include "lua_openthread.h"
 #include "lua_cbor.h"
 #include <dirent.h>
@@ -35,36 +35,30 @@ static int restart_system(lua_State *L);
 static int get_heap(lua_State *L);
 static int lua_uptime(lua_State *L);
 
-
-
-typedef struct {
+typedef struct
+{
     lua_callback_helper_t fn;
     void *ctx;
 } lua_callback_t;
 
-
-
 static const struct luaL_Reg system_funcs[] = {
     // { "start_task", start_task },
-    { "restart", restart_system },
-    { "heap_info", get_heap },
-    { "uptime", lua_uptime },
-    { NULL, NULL }
-};
+    {"restart", restart_system},
+    {"heap_info", get_heap},
+    {"uptime", lua_uptime},
+    {NULL, NULL}};
 
-
-void lua_report_error(lua_State *L, int status, const char *prefix) {
+void lua_report_error(lua_State *L, int status, const char *prefix)
+{
     if (status == LUA_OK)
         return;
     ESP_LOGE(TAG, "%s: %s", prefix, lua_tostring(L, -1));
     lua_pop(L, 1);
 }
 
-
 SemaphoreHandle_t mutex;
 static lua_State *L;
 QueueHandle_t callback_queue;
-
 
 static const char *type_names[] = {
     "nil",
@@ -78,33 +72,30 @@ static const char *type_names[] = {
     "thread",
 };
 
-
 static const code_lookup_t reset_reason_lookup[] = {
-    {.sval="power_on", .ival=RESET_REASON_CHIP_POWER_ON},
-    {.sval="software", .ival=RESET_REASON_CORE_SW},
-    {.sval="deep_sleep", .ival=RESET_REASON_CORE_DEEP_SLEEP},
-    {.sval="mwdt0", .ival=RESET_REASON_CORE_MWDT0},
-    {.sval="rtc_wdt", .ival=RESET_REASON_CORE_RTC_WDT},
-    {.sval="cpu0_mwdt0", .ival=RESET_REASON_CPU0_MWDT0},
-    {.sval="cpu0_software", .ival=RESET_REASON_CPU0_SW},
-    {.sval="cpu0_rtc", .ival=RESET_REASON_CPU0_RTC_WDT},
-    {.sval="brown_out", .ival=RESET_REASON_SYS_BROWN_OUT},
-    {.sval="rtc_wdt", .ival=RESET_REASON_SYS_RTC_WDT},
-    {.sval="super_wdt", .ival=RESET_REASON_SYS_SUPER_WDT},
+    {.sval = "power_on", .ival = RESET_REASON_CHIP_POWER_ON},
+    {.sval = "software", .ival = RESET_REASON_CORE_SW},
+    {.sval = "deep_sleep", .ival = RESET_REASON_CORE_DEEP_SLEEP},
+    {.sval = "mwdt0", .ival = RESET_REASON_CORE_MWDT0},
+    {.sval = "rtc_wdt", .ival = RESET_REASON_CORE_RTC_WDT},
+    {.sval = "cpu0_mwdt0", .ival = RESET_REASON_CPU0_MWDT0},
+    {.sval = "cpu0_software", .ival = RESET_REASON_CPU0_SW},
+    {.sval = "cpu0_rtc", .ival = RESET_REASON_CPU0_RTC_WDT},
+    {.sval = "brown_out", .ival = RESET_REASON_SYS_BROWN_OUT},
+    {.sval = "rtc_wdt", .ival = RESET_REASON_SYS_RTC_WDT},
+    {.sval = "super_wdt", .ival = RESET_REASON_SYS_SUPER_WDT},
     // {.sval="clock glitch", .ival=RESET_REASON_SYS_CLK_GLITCH},
-    {.sval="efuse crc", .ival=RESET_REASON_CORE_EFUSE_CRC},
-    {.sval="jtag", .ival=RESET_REASON_CPU0_JTAG},
-    {.sval=NULL, .ival=-1}
+    {.sval = "efuse crc", .ival = RESET_REASON_CORE_EFUSE_CRC},
+    {.sval = "jtag", .ival = RESET_REASON_CPU0_JTAG},
+    {.sval = NULL, .ival = -1}
 
 };
 
-
-
-void schedule_callback_from_ISR(lua_callback_helper_t fn, void *ctx) {
+void schedule_callback_from_ISR(lua_callback_helper_t fn, void *ctx)
+{
     lua_callback_t cb = {
         .fn = fn,
-        .ctx = ctx
-    };
+        .ctx = ctx};
     BaseType_t higherPriorityTaskWoken;
 
     // If the task queue fills up, panic
@@ -112,123 +103,140 @@ void schedule_callback_from_ISR(lua_callback_helper_t fn, void *ctx) {
     portYIELD_FROM_ISR(higherPriorityTaskWoken);
 }
 
-
-int code_str_to_int(const char *str, const code_lookup_t *lookup) {
-    for (code_lookup_t *l = (code_lookup_t *) lookup; l->sval; l++) {
-        if (strcmp(l->sval, str) == 0) {
+int code_str_to_int(const char *str, const code_lookup_t *lookup)
+{
+    for (code_lookup_t *l = (code_lookup_t *)lookup; l->sval; l++)
+    {
+        if (strcmp(l->sval, str) == 0)
+        {
             return l->ival;
         }
     }
     return -1;
 }
 
-const char *code_int_to_str(int code, const code_lookup_t *lookup) {
-    for (code_lookup_t *l = (code_lookup_t *) lookup; l->sval; l++) {
-        if (code == l->ival) {
+const char *code_int_to_str(int code, const code_lookup_t *lookup)
+{
+    for (code_lookup_t *l = (code_lookup_t *)lookup; l->sval; l++)
+    {
+        if (code == l->ival)
+        {
             return l->sval;
         }
     }
     return NULL;
 }
 
-int lua_lookup(lua_State *L, int argIdx, const code_lookup_t *lookup) {
+int lua_lookup(lua_State *L, int argIdx, const code_lookup_t *lookup)
+{
     int isnum;
     int ival = lua_tointegerx(L, argIdx, &isnum);
-    if (isnum) {
-        while (lookup->sval != NULL) {
-            if (lookup->ival == ival) {
+    if (isnum)
+    {
+        while (lookup->sval != NULL)
+        {
+            if (lookup->ival == ival)
+            {
                 return ival;
             }
             lookup++;
         }
         ival = -1;
-    } else if (lua_isstring(L, argIdx)) {
+    }
+    else if (lua_isstring(L, argIdx))
+    {
         const char *sval = lua_tostring(L, argIdx);
-        if (!sval) {
+        if (!sval)
+        {
             return -1;
         }
         return code_str_to_int(sval, lookup);
     }
     return -1;
-
 }
 
-
-
-
-int check_esp_err(lua_State *L, esp_err_t err) {
-    if (err != ESP_OK) {
+int check_esp_err(lua_State *L, esp_err_t err)
+{
+    if (err != ESP_OK)
+    {
         luaL_error(L, esp_err_to_name(err));
         return 1;
     }
     return 0;
-
 }
 
-
-
-
-void dumpStack(lua_State *L) {
-    for (int i = lua_gettop(L); i > 0; i--) {
-        switch (lua_type(L, i)) {
-            case LUA_TBOOLEAN:
-                ESP_LOGI(TAG, "[%d] %s", i, lua_toboolean(L, i) ? "true" : "false");
-                break;
-            case LUA_TSTRING:
-                ESP_LOGI(TAG, "[%d] \"%s\"", i, lua_tostring(L, i));
-                break;
-            case LUA_TNUMBER:
-                if (lua_isinteger(L, i)) {
-                    ESP_LOGI(TAG, "[%d] %lld", i, lua_tointeger(L, i));
-                } else {
-                    ESP_LOGI(TAG, "[%d] %lf", i, lua_tonumber(L, i));
-                }
-                break;
-            default:
-                ESP_LOGI(TAG, "[%d] %s %p", i, type_names[lua_type(L, i)], lua_topointer(L, i));
-                break;
+void dumpStack(lua_State *L)
+{
+    for (int i = lua_gettop(L); i > 0; i--)
+    {
+        switch (lua_type(L, i))
+        {
+        case LUA_TBOOLEAN:
+            ESP_LOGI(TAG, "[%d] %s", i, lua_toboolean(L, i) ? "true" : "false");
+            break;
+        case LUA_TSTRING:
+            ESP_LOGI(TAG, "[%d] \"%s\"", i, lua_tostring(L, i));
+            break;
+        case LUA_TNUMBER:
+            if (lua_isinteger(L, i))
+            {
+                ESP_LOGI(TAG, "[%d] %lld", i, lua_tointeger(L, i));
+            }
+            else
+            {
+                ESP_LOGI(TAG, "[%d] %lf", i, lua_tonumber(L, i));
+            }
+            break;
+        default:
+            ESP_LOGI(TAG, "[%d] %s %p", i, type_names[lua_type(L, i)], lua_topointer(L, i));
+            break;
         }
     }
 }
 
-
-const char *lua_type_str(lua_State *L, int idx) {
+const char *lua_type_str(lua_State *L, int idx)
+{
     return type_names[lua_type(L, idx)];
 }
 
-
-lua_State *acquireLuaMutex() {
+lua_State *acquireLuaMutex()
+{
     xSemaphoreTake(mutex, portMAX_DELAY);
     return L;
 }
 
-void releaseLuaMutex() {
-    if (lua_gettop(L) != 0) {
+void releaseLuaMutex()
+{
+    if (lua_gettop(L) != 0)
+    {
         ESP_LOGW(TAG, "Stack is not-empty after a LUA callback");
         dumpStack(L);
+        lua_settop(L, 0);
     }
     xSemaphoreGive(mutex);
 }
 
-
-
-ccpeed_err_t lua_execute_callback(int fnRef, int nArgs) {
+ccpeed_err_t lua_execute_callback(int fnRef, int nArgs)
+{
     assert(lua_gettop(L) == 0);
     assert(lua_rawgeti(L, LUA_REGISTRYINDEX, fnRef));
-    if (lua_pcall(L, nArgs, 0, 0)) {
+    if (lua_pcall(L, nArgs, 0, 0))
+    {
         ESP_LOGE(TAG, "Error executing function in LUA");
     }
     return CCPEED_NO_ERR;
 }
 
-static int restart_system(lua_State *L) {
+static int restart_system(lua_State *L)
+{
     esp_timer_deinit();
     gpio_prepare_for_reset();
     esp_restart();
     return 0;
 }
 
-static int get_heap(lua_State *L) {
+static int get_heap(lua_State *L)
+{
     multi_heap_info_t info;
     heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
 
@@ -247,64 +255,69 @@ static int get_heap(lua_State *L) {
     return 1;
 }
 
-
-bool get_int(lua_State *L, const char *fname, int *out, int default_value) {
+bool get_int(lua_State *L, const char *fname, int *out, int default_value)
+{
     bool res = false;
     lua_getfield(L, -1, fname);
-    if (lua_isinteger(L, -1)) {
+    if (lua_isinteger(L, -1))
+    {
         *out = lua_tointeger(L, -1);
         res = true;
-    } else if (lua_isnil(L, -1)) {
+    }
+    else if (lua_isnil(L, -1))
+    {
         *out = default_value;
         res = true;
-    } else {
+    }
+    else
+    {
         ESP_LOGE(TAG, "Invalid field type");
     }
     lua_pop(L, 1);
     return res;
 }
 
-
-
-
-
-
-static int io_exists(lua_State *L) {
-    const char * path;
+static int io_exists(lua_State *L)
+{
+    const char *path;
     struct stat st;
-    
-    if ((path = luaL_checkstring(L, 1)) != NULL) {
+
+    if ((path = luaL_checkstring(L, 1)) != NULL)
+    {
         lua_pushboolean(L, stat(path, &st));
     }
     return 1;
 }
 
-static int io_readdir(lua_State *L) {
+static int io_readdir(lua_State *L)
+{
     const char *dirname = luaL_checkstring(L, 1);
-    if (!dirname) {
+    if (!dirname)
+    {
         luaL_argerror(L, 1, "Expected a directory argument");
     }
 
-    DIR* dir = opendir(dirname);
-    if (dir == NULL) {
+    DIR *dir = opendir(dirname);
+    if (dir == NULL)
+    {
         luaL_error(L, "Could not open directory %s", dirname);
     }
 
     lua_newtable(L);
     int idx = 1;
     struct dirent *de;
-    while ((de = readdir(dir))) {
+    while ((de = readdir(dir)))
+    {
         lua_pushinteger(L, idx++);
         lua_pushstring(L, de->d_name);
         lua_settable(L, -3);
     }
     closedir(dir);
     return 1;
-
 }
 
-
-static int lua_patch_io(lua_State *L) {
+static int lua_patch_io(lua_State *L)
+{
     lua_getglobal(L, "io");
 
     lua_pushstring(L, "readdir");
@@ -318,30 +331,27 @@ static int lua_patch_io(lua_State *L) {
     return 1;
 }
 
-
-static int lua_uptime(lua_State *L) {
+static int lua_uptime(lua_State *L)
+{
     long long num_secs = esp_timer_get_time() / 1000;
     lua_pushinteger(L, num_secs);
     return 1;
 }
 
-
-int luaopen_system(lua_State *L) {
+int luaopen_system(lua_State *L)
+{
     luaL_newlib(L, system_funcs);
 
     // Set a default_mac string on the system object.
     lua_pushstring(L, "mac_address");
     static uint8_t defaultMac[8];
     ESP_ERROR_CHECK(esp_efuse_mac_get_default(defaultMac));
-    lua_pushlstring(L, (char *) defaultMac, sizeof(defaultMac));
+    lua_pushlstring(L, (char *)defaultMac, sizeof(defaultMac));
     lua_settable(L, -3);
-
 
     lua_pushstring(L, "reset_reason");
     lua_pushstring(L, code_int_to_str(esp_reset_reason(), reset_reason_lookup));
     lua_settable(L, -3);
-
-    
 
     lua_pushstring(L, "firmware");
     const esp_app_desc_t *appdesc = esp_app_get_description();
@@ -366,26 +376,21 @@ int luaopen_system(lua_State *L) {
     lua_pushstring(L, appdesc->time);
     lua_settable(L, -3);
 
-
     lua_pushstring(L, "sha256");
-    lua_pushlstring(L, (const char *) appdesc->app_elf_sha256, sizeof(appdesc->app_elf_sha256));
+    lua_pushlstring(L, (const char *)appdesc->app_elf_sha256, sizeof(appdesc->app_elf_sha256));
     lua_settable(L, -3);
 
     lua_settable(L, -3);
-
-
 
     lua_patch_io(L);
     return 1;
 }
 
-static void load_custom_libs(lua_State *L) {
+static void load_custom_libs(lua_State *L)
+{
 
     luaL_requiref(L, "system", luaopen_system, true);
     lua_pop(L, 1);
-
-
-
 
     luaL_requiref(L, "gpio", luaopen_gpio, true);
     lua_pop(L, 1);
@@ -401,19 +406,17 @@ static void load_custom_libs(lua_State *L) {
     lua_pop(L, 1);
     luaL_requiref(L, "Timer", luaopen_timer, true);
     lua_pop(L, 1);
+    luaL_requiref(L, "crypto", luaopen_crypto, true);
+    lua_pop(L, 1);
 }
 
-
-
-
-void run_lua_loop() {
+void run_lua_loop()
+{
     esp_err_t err = esp_timer_init();
     assert(err == ESP_OK || err == ESP_ERR_INVALID_STATE); // To allow for somebody else to have already initialised it.
 
     mutex = xSemaphoreCreateMutex();
     assert(mutex);
-
-
 
     acquireLuaMutex();
 
@@ -421,7 +424,8 @@ void run_lua_loop() {
     // lua_task_t *coro;
     bool running = true;
 
-    if (!L) {
+    if (!L)
+    {
         ESP_LOGE(TAG, "Could not create state\n");
         abort();
     }
@@ -430,15 +434,18 @@ void run_lua_loop() {
 
     ESP_LOGI(TAG, "Running '/fs/init.lua' from filesystem");
     int r = luaL_loadfile(L, "/fs/init.lua");
-    if (r) {
+    if (r)
+    {
         lua_report_error(L, r, "Parsing Error");
         running = false;
     }
 
     // run the main function.
-    if (running) {
+    if (running)
+    {
         r = lua_pcall(L, 0, 0, 0);
-        if (r) {
+        if (r)
+        {
             lua_report_error(L, r, "First Run Error");
         }
     }
@@ -449,18 +456,20 @@ void run_lua_loop() {
 
     ESP_LOGI(TAG, "Waiting for code to initiate callbacks");
     lua_callback_t cb;
-    while (running) {
-        if (xQueueReceive(callback_queue, &cb, portMAX_DELAY)) {
+    while (running)
+    {
+        if (xQueueReceive(callback_queue, &cb, portMAX_DELAY))
+        {
             lua_State *L = acquireLuaMutex();
-            if (cb.fn) {
+            if (cb.fn)
+            {
                 cb.fn(L, cb.ctx);
             }
             releaseLuaMutex();
         }
     }
 
-    // Close down the LUA Context. 
+    // Close down the LUA Context.
     lua_close(L);
     ESP_LOGI(TAG, "State closed, heap: %u", xPortGetFreeHeapSize());
-
 }

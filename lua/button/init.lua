@@ -6,6 +6,7 @@ require("default_handlers")
 -- Code below here is device-specific
 require("button")
 
+print("Ca cert is ", openthread.certs.ca)
 
 
 local dali_bridge_ip = openthread.parse_ip6("fdbf:1afc:5480:1:30a3:bef2:6c55:fccd")
@@ -52,3 +53,9 @@ Button:new {
     on_click = send_dali_cmd("toggle"),
     on_long_press = send_dali_cmd("dim"),
 }
+
+
+require("crypto")
+
+local private, public = crypto.ec_keypair_gen()
+print("Private", Helpers.hexlify(private), string.len(private), "Public", Helpers.hexlify(public), string.len(public));

@@ -67,6 +67,7 @@ end
 ---Sets the value of the future, and notifies via the on_set field of the Future, if set.
 ---@param val any The value we are setting.
 function Future:set(val)
+    log:debug("Setting future", self, "to", val)
     assert(not self.is_set, "Condition already completed")
     self.is_set = true
     self.value = val
@@ -122,7 +123,7 @@ end
 ---@param delay any The number of milliseconds to delay
 ---@param val? any Value to resolve as - Defaults to nil.
 ---@return unknown
-getmetatable(Timer).defer = function(timer, delay, val)
+Timer.defer = function(timer, delay, val)
     return Future:defer(delay, val, timer)
 end
 
@@ -170,7 +171,6 @@ local function task_future_set(future, res)
 end
 
 function Task:set_future(future)
-    log:debug("setting task", self, "'s future to ", future)
     future.task = self
     self.awaiting = future
     future.on_set = task_future_set

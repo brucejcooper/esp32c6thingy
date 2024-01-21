@@ -1,10 +1,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <driver/gpio.h>
+#include <esp_log.h>
 #include <lua/lua.h>
 #include <lua/lauxlib.h>
 #include <lua/lualib.h>
-#include <esp_log.h>
 
 #include "openthread/cli.h"
 #include "openthread/instance.h"
@@ -713,6 +713,11 @@ static int ip6_to_str(lua_State *L)
     return 1;
 }
 
+static int parse_pem(lua_State *L)
+{
+    return 1;
+}
+
 static const struct luaL_Reg funcs[] = {
     {"init", new_ot},
     {"set_active_dataset", set_active_dataset},
@@ -722,6 +727,7 @@ static const struct luaL_Reg funcs[] = {
     {"ip_addresses", get_ipaddresses},
     {"ip6_to_str", ip6_to_str},
     {"parse_ip6", str_to_ip6},
+    {"parse_pem", parse_pem},
     {NULL, NULL}};
 
 int luaopen_openthread(lua_State *L)

@@ -7,6 +7,7 @@ idf_component_register(SRCS
                     "lua_log.c"
                     "lua_gpio.c"
                     "lua_digest.c"
+                    "lua_crypto.c"
                     "lua_openthread.c"
                     "lua_timer.c"
                     "lua_cbor.c"

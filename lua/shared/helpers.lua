@@ -4,7 +4,7 @@ Helpers = {}
 function Helpers.read_file(fname)
     local f = io.open(fname, "r")
     if not f then
-        error("Could not open file" .. fname)
+        error("Could not open file " .. fname)
     end
     local contents = f:read("*a")
     f:close()
@@ -59,7 +59,7 @@ Lookup.__index = function(table, key)
     elseif kt == 'number' then
         val = table.by_int[key]
     else
-        error("index lookup must be a string or integer in the table")
+        error(string.format("Lookup was sent key of %s", kt))
     end
     if not val then
         error(string.format("Key %s not found in lookup table", key))

@@ -177,16 +177,11 @@ local function parse_opt_block(packet, opt_name, val)
     if packet[opt_name] then
         error(string.format("singleton option %s appears more than once", opt_name))
     end
-
     local ival = bstr_to_int(val)
-    local more = false
-    if ival & 0x08 then
-        more = true
-    end
     packet[opt_name] = {
         id = ival >> 4,
         size = 1 << (4 + (ival & 0x07)),
-        more = more
+        more = (ival & 0x08) ~= 0
     }
 end
 
@@ -500,9 +495,13 @@ local function add_default_fields(pkt)
     pkt.sock_addr = pkt.sock_addr or openthread.ip_addresses()[1]
 end
 
+
 --- Sends a non-confirmable CoAP Packet. No retransmits, no timers... nothing.
 function coap:send_non_confirmable(pkt)
     add_default_fields(pkt)
+    if not pkt.type then
+        pkt.type = "non-confirmable"
+    end
     local encoded = encode_coap_packet(pkt)
     openthread.send_dgram(pkt.sock_addr, pkt.sock_port, pkt.peer_addr, pkt.peer_port, encoded)
 end
@@ -636,10 +635,6 @@ end
 
 function coap:start_server()
     log:info("Starting CoAP server")
-    self.cert = Helpers.read_file("cert.pem")
-    self.key = Helpers.read_file("cert.key")
-    self.ca = Helpers.read_file("ca.pem")
-
     self.sock = openthread:listen_udp(coap.port, coap.handle_coap_packet)
 end
 
