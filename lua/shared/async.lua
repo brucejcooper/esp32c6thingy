@@ -141,10 +141,12 @@ function start_async_task(fn, arg)
     local success, future = coroutine.resume(task.thread, arg)
 
     if success then
-        if not getmetatable(future) == Future then
-            error(string.format("Initial call of task %s returned an object that isn't a future: %s", task, future))
+        if future ~= nil then
+            if getmetatable(future) ~= Future then
+                error(string.format("Initial call of task %s returned an object that isn't a future: %s", task, future))
+            end
+            task:set_future(future)
         end
-        task:set_future(future)
         return task
     else
         log:error("Error performing first execute of task", future)
@@ -191,6 +193,7 @@ function Task:continue_execution(future_result)
             end
         else
             -- The coroutine is still running, and returned another future.
+            -- log:info("Call result is", callresult)
             if (getmetatable(callresult) == Future) then
                 self:set_future(callresult)
             else

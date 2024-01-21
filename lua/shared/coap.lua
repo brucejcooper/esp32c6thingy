@@ -492,7 +492,7 @@ local function add_default_fields(pkt)
     pkt.token = pkt.token or new_token()
     pkt.sock_port = pkt.sock_port or coap.port
     pkt.peer_port = pkt.peer_port or coap.port
-    pkt.sock_addr = pkt.sock_addr or openthread.ip_addresses()[1]
+    pkt.sock_addr = pkt.sock_addr or openthread.ip_addresses()[1].ip
 end
 
 
@@ -503,6 +503,7 @@ function coap:send_non_confirmable(pkt)
         pkt.type = "non-confirmable"
     end
     local encoded = encode_coap_packet(pkt)
+    -- log:info("Sending dgram ", pkt.sock_addr, pkt.sock_port, pkt.peer_addr, pkt.peer_port, pkt)
     openthread.send_dgram(pkt.sock_addr, pkt.sock_port, pkt.peer_addr, pkt.peer_port, encoded)
 end
 
@@ -549,6 +550,10 @@ function coap:handle_coap_packet(dgram)
         log:debug("Parsed", pkt)
 
         pkt.reply = function(resp)
+            if msg_type == 'non-confirmable' then
+                log:info("Ignoring request to respond to non-confirmable call.  It will be dropped")
+                return
+            end
             -- Wrap the respone, if it isn't already in the right format.
             if type(resp) ~= 'table' then
                 resp = { payload = resp }
@@ -593,9 +598,6 @@ function coap:handle_coap_packet(dgram)
                     return debug.traceback(err, 2)
                 end, pkt)
                 if success then
-                    if not pkt.replied then
-                        log:warn("Handler did not reply.  Message will not be responded to")
-                    end
                     if res ~= nil then
                         log:warn("Handler returned a value, but we don't do anything with it")
                     end
