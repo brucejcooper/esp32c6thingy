@@ -25,8 +25,8 @@ end
 Button:new {
     pin = 19,
     dali_addr = 0,
-    on_click = send_dali_cmd("toggle"),
-    on_long_press = send_dali_cmd("down"),
+    on_press = send_dali_cmd("toggle"),
+    -- on_long_press = send_dali_cmd("down"),
 }
 
 Button:new {
