@@ -1,5 +1,4 @@
 require("async")
-local log = Logger:get("button")
 --- @class Button
 -- Has a state machine that interacts with the gpio system and timers to do debouncing, double click and long press detection.
 -- Implementors can react to events by overriding the on_* methods.
@@ -122,7 +121,6 @@ end
 function Button:long_pressed()
     local released = false
     repeat
-        log:info("Long Press")
         self.repeat_count = self.repeat_count + 1
         self:emit_evt("on_long_press")
         -- Wait for the repeat timeout to occur, or for the button to have been released

@@ -12,7 +12,6 @@ local dali_bridge_ip = openthread.parse_ip6("fdbf:1afc:5480:1:30a3:bef2:6c55:fcc
 ---Glue function to create an event handler that will send the supplied action to a dali bridge device.
 local function send_dali_cmd(action)
     return function(button)
-        log:info("Sending cmd", action, "to", button.dali_addr)
         coap:send_non_confirmable {
             code = "post",
             peer_addr = dali_bridge_ip,
@@ -21,17 +20,34 @@ local function send_dali_cmd(action)
     end
 end
 
---This device has 5 buttons
+local function fetch_dali_level(button)
+    start_async_task(function()
+        local resp = await(coap:send_confirmable {
+            code = "get",
+            peer_addr = dali_bridge_ip,
+            path = { "dali", tostring(button.dali_addr) }
+        })
+        if resp.code ~= "content" then
+            error("Didn't get content from dali device")
+        end
+        local p = cbor.decode(resp.payload)
+        log:info("current level for device ", button.dali_addr, "is", p)
+    end)
+end
+
+
+--Button1 controls a relay, which can't be dimmed.  Toggle as soon as the buttong is pressed
 Button:new {
     pin = 19,
     dali_addr = 0,
     on_press = send_dali_cmd("toggle"),
-    -- on_long_press = send_dali_cmd("down"),
 }
 
+-- Button 2 is a dimmable DALI device.
 Button:new {
     pin = 20,
     dali_addr = 1,
+    on_press = fetch_dali_level,
     on_click = send_dali_cmd("toggle"),
     on_long_press = send_dali_cmd("down"),
 }

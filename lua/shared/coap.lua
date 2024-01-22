@@ -476,8 +476,8 @@ end
 
 ---Stops any more attempts at retransmitting the reliable packet.
 local function rtrans_stop_retranmsission(rtrans)
-    rtrans.timer.stop()
-    rtrans.timer.delete()
+    rtrans.timer:stop()
+    rtrans.timer:delete()
     coap.active_rtrans[rtrans.correlation_id] = nil
 end
 
@@ -512,6 +512,9 @@ end
 ---@return Future A future that will be resolved with response packet.
 function coap:send_confirmable(pkt)
     add_default_fields(pkt)
+    if not pkt.type then
+        pkt.type = "confirmable"
+    end
     local timer = Timer:new(rtrans_timeout)
     local rtrans = Future:new {
         packet = pkt,
@@ -616,7 +619,7 @@ function coap:handle_coap_packet(dgram)
             log:info(string.format("Ack from %s port %d msgId %d", openthread.ip6_to_str(pkt.peer_addr),
                 pkt.peer_port, pkt.message_id))
             rtrans:cancel()
-            rtrans.set(pkt)
+            rtrans:set(pkt)
         else
             -- We don't know about this packet.
             log:info(string.format("Ack from unknown %s port %d msgId %d will be ignored",

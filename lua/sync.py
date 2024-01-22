@@ -50,7 +50,7 @@ def readfile(f):
 
 
 async def main(args):
-    print("Syncing with args", args)
+    print("Syncing with args", args.ip)
     protocol = await Context.create_client_context()
     remote_files = (await call(protocol, args.ip, "fs", GET))['files']
 

@@ -149,7 +149,7 @@ function start_async_task(fn, arg)
         end
         return task
     else
-        log:error("Error performing first execute of task", future)
+        log:error("Error performing first execute of task", debug.traceback(task.thread))
     end
 end
 
